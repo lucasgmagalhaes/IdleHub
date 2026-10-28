@@ -7,11 +7,13 @@ function compact(value: number): string {
 }
 
 export function formatBytes(bytes: number): string {
-  return bytes >= GB ? `${compact(bytes / GB)} GB` : `${compact(bytes / MB)} MB`;
+  // Sizes that round to 1024 MB are shown as 1 GB.
+  return Math.round(bytes / MB) >= 1024 ? `${compact(bytes / GB)} GB` : `${compact(bytes / MB)} MB`;
 }
 
+/** A sample the system could not measure shows as a dash, never as "NaN%". */
 export function formatCpu(percent: number): string {
-  return `${compact(percent)}%`;
+  return Number.isFinite(percent) ? `${compact(Math.max(0, percent))}%` : "–";
 }
 
 /** Host and path without the protocol, e.g. `orteil.dashnet.org/cookieclicker/`. */

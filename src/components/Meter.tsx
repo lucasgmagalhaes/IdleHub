@@ -7,7 +7,7 @@ interface MeterProps {
 }
 
 export function Meter({ label, percent, text, className = "" }: MeterProps) {
-  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  const value = Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : 0;
   return (
     <div className={`meter ${className}`}>
       <span className="meter-label">{label}</span>
