@@ -87,6 +87,7 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
             index={pane}
             tab={tabInPane(pane)}
             tabs={view.tabs}
+            canPin={!mobile}
             onShow={(index, id) => void run(() => backend.showInPane(index, id))}
             onReload={(id) => void run(() => backend.reloadTab(id))}
             onToggleMute={(tab) => void run(() => backend.setMuted(tab.id, !tab.muted))}

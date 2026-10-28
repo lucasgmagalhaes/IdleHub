@@ -65,6 +65,12 @@ describe("App on mobile", () => {
     expect(backend.showInPane).not.toHaveBeenCalled();
   });
 
+  it("does not offer pinning, which would lock the only pane", async () => {
+    setup();
+    const pane = await screen.findByRole("region", { name: "Painel 1: Huntera Main" });
+    expect(within(pane).queryByRole("button", { name: "Fixar" })).not.toBeInTheDocument();
+  });
+
   it("opens a new tab from the top bar", async () => {
     const { backend, user } = setup();
     await screen.findByRole("region", { name: /^Painel 1/ });

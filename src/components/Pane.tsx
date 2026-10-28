@@ -8,6 +8,8 @@ interface PaneProps {
   index: number;
   tab: Tab | undefined;
   tabs: Tab[];
+  /** Phones have one pane; pinning it would make switching tabs impossible. */
+  canPin?: boolean;
   onShow(pane: number, id: string): void;
   onReload(id: string): void;
   onToggleMute(tab: Tab): void;
@@ -16,7 +18,7 @@ interface PaneProps {
   onNewTab(): void;
 }
 
-export function Pane({ index, tab, tabs, ...actions }: PaneProps) {
+export function Pane({ index, tab, tabs, canPin = true, ...actions }: PaneProps) {
   const number = index + 1;
   return (
     <section className="pane" aria-label={t.pane(number, tab?.label ?? null)}>
@@ -27,10 +29,12 @@ export function Pane({ index, tab, tabs, ...actions }: PaneProps) {
             className="pane-title"
             aria-label={t.paneTab(number)}
             value={tab.id}
+            disabled={tab.pinned}
             onChange={(e) => actions.onShow(index, e.target.value)}
           >
             {tabs.map((option) => (
-              <option key={option.id} value={option.id}>
+              // Pinned tabs on screen stay in their pane.
+              <option key={option.id} value={option.id} disabled={option.id !== tab.id && option.pinned && option.pane !== null}>
                 {option.label}
               </option>
             ))}
@@ -52,15 +56,17 @@ export function Pane({ index, tab, tabs, ...actions }: PaneProps) {
             >
               {tab.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={t.pin}
-              aria-pressed={tab.pinned}
-              onClick={() => actions.onTogglePin(tab)}
-            >
-              <Pin size={16} />
-            </button>
+            {canPin && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t.pin}
+                aria-pressed={tab.pinned}
+                onClick={() => actions.onTogglePin(tab)}
+              >
+                <Pin size={16} />
+              </button>
+            )}
             <button
               type="button"
               className="icon-button"

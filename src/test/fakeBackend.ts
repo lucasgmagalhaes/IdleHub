@@ -52,6 +52,8 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
     showInPane: vi.fn(async (pane: number, id: string) => {
       const from = tabs.indexOf(find(id));
       const to = Math.min(pane, tabs.length - 1);
+      const shownAndPinned = (i: number) => i < paneCount && tabs[i].pinned;
+      if (from !== to && (shownAndPinned(from) || shownAndPinned(to))) throw "pinned tabs must be unpinned first";
       [tabs[from], tabs[to]] = [tabs[to], tabs[from]];
       return view();
     }),

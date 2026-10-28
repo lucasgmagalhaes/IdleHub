@@ -150,6 +150,18 @@ describe("App", () => {
       expect(within(pane).getByRole("button", { name: "Fechar aba" })).toBeDisabled();
     });
 
+    it("does not offer to move a pinned tab out of its pane", async () => {
+      const { user } = setup([cookie, melvor, farmer], 2);
+      const first = await screen.findByRole("region", { name: "Painel 1: Cookie Clicker" });
+      await user.click(within(first).getByRole("button", { name: "Fixar" }));
+
+      expect(within(first).getByRole("combobox", { name: "Aba do painel 1" })).toBeDisabled();
+      const second = screen.getByRole("region", { name: "Painel 2: Melvor Idle" });
+      const option = within(second).getByRole("option", { name: "Cookie Clicker" });
+      expect(option).toBeDisabled();
+      expect(within(second).getByRole("option", { name: "Farmer Against Potatoes" })).toBeEnabled();
+    });
+
     it("reloads a tab", async () => {
       const { backend, user } = setup();
       const pane = await screen.findByRole("region", { name: "Painel 3: Farmer Against Potatoes" });
