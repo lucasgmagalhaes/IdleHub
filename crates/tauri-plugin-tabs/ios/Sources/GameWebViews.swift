@@ -5,12 +5,14 @@ enum TabsError: LocalizedError {
     case invalidUrl(String)
     case invalidProfile(String)
     case noSuperview
+    case unsupportedSystem
 
     var errorDescription: String? {
         switch self {
         case .invalidUrl(let url): return "Invalid address: \(url)"
         case .invalidProfile(let profile): return "Invalid profile id: \(profile)"
         case .noSuperview: return "The UI webview is not in a view hierarchy yet"
+        case .unsupportedSystem: return "IdleHub needs iOS 17 or later to keep accounts separate"
         }
     }
 }
@@ -48,6 +50,7 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
 
     func open(id: String, url: String, profile: String, initScript: String) throws {
         if tabs[id] != nil { return }
+        guard #available(iOS 17.0, *) else { throw TabsError.unsupportedSystem }
         guard let address = URL(string: url) else { throw TabsError.invalidUrl(url) }
         guard let store = UUID(uuidString: profile) else { throw TabsError.invalidProfile(profile) }
         guard let ui = uiWebView, let container = ui.superview else { throw TabsError.noSuperview }
@@ -96,6 +99,7 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
         tabs[id]?.webView
     }
 
+    @available(iOS 17.0, *)
     private func makeWebView(profile: UUID, initScript: String) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: profile)
