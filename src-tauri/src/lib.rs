@@ -5,34 +5,45 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use idlehub_core::account::{Account, AccountId, AccountStore};
-use idlehub_core::layout::Rect;
+use idlehub_core::account::{AccountId, AccountStore};
+use idlehub_core::layout::{PaneCount, Rect};
 use idlehub_core::metrics::{self, UsageReport};
 use idlehub_core::policy::RenderPolicy;
 use idlehub_core::profile::profile_for;
-use idlehub_core::workspace::{Placement, Workspace};
+use idlehub_core::workspace::{TabState, Workspace};
+use serde::Serialize;
 use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::window::WindowBuilder;
-use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, Window, WindowEvent,
-};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, Window};
 
 use sampler::Sampler;
 use scripts::{account_id_from_label, apply_policy_script, initialization_script, webview_label};
 
 const MAIN_WINDOW: &str = "main";
 const UI_WEBVIEW: &str = "ui";
-/// Height of the React toolbar; must match `--toolbar-height` in `src/App.css`.
-const TOOLBAR_HEIGHT: f64 = 44.0;
-const ACCOUNTS_FILE: &str = "accounts.json";
+const WORKSPACE_FILE: &str = "workspace.json";
+const LEGACY_ACCOUNTS_FILE: &str = "accounts.json";
+/// Tabs without a pane are shrunk to this size instead of hidden: hiding a
+/// webview makes WebView2 / WebKit throttle its timers, which would stall the game.
+const PARKED_SIZE: f64 = 1.0;
 
 struct AppState {
     data_dir: PathBuf,
     workspace: Mutex<Workspace>,
-    /// Last policy sent to each page, so resizes do not spam `eval`.
+    /// Content area of each pane, reported by the UI in pane order.
+    pane_rects: Mutex<Vec<Rect>>,
+    /// Last policy sent to each page, so layout changes do not spam `eval`.
     applied: Mutex<HashMap<AccountId, RenderPolicy>>,
     sampler: Mutex<Sampler>,
+}
+
+/// Everything the UI renders, returned by every command that changes it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TabsView {
+    tabs: Vec<TabState>,
+    panes: PaneCount,
 }
 
 type CommandResult<T> = Result<T, String>;
@@ -41,18 +52,23 @@ fn to_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn load_store(data_dir: &Path) -> AccountStore {
-    std::fs::read_to_string(data_dir.join(ACCOUNTS_FILE))
-        .ok()
+fn load_workspace(data_dir: &Path) -> Workspace {
+    let read = |file| std::fs::read_to_string(data_dir.join(file)).ok();
+    if let Some(workspace) = read(WORKSPACE_FILE).and_then(|json| Workspace::from_json(&json).ok())
+    {
+        return workspace;
+    }
+    let store = read(LEGACY_ACCOUNTS_FILE)
         .and_then(|json| AccountStore::from_json(&json).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    Workspace::new(store)
 }
 
-fn save_store(data_dir: &Path, store: &AccountStore) -> std::io::Result<()> {
-    std::fs::create_dir_all(data_dir)?;
-    let tmp = data_dir.join(format!("{ACCOUNTS_FILE}.tmp"));
-    std::fs::write(&tmp, store.to_json())?;
-    std::fs::rename(tmp, data_dir.join(ACCOUNTS_FILE))
+fn save_workspace(data_dir: &Path, workspace: &Workspace) -> CommandResult<()> {
+    std::fs::create_dir_all(data_dir).map_err(to_error)?;
+    let tmp = data_dir.join(format!("{WORKSPACE_FILE}.tmp"));
+    std::fs::write(&tmp, workspace.to_json()).map_err(to_error)?;
+    std::fs::rename(tmp, data_dir.join(WORKSPACE_FILE)).map_err(to_error)
 }
 
 fn main_window(app: &AppHandle) -> CommandResult<Window> {
@@ -60,29 +76,18 @@ fn main_window(app: &AppHandle) -> CommandResult<Window> {
         .ok_or_else(|| "main window is gone".to_owned())
 }
 
-/// Area below the toolbar, in logical pixels.
-fn content_area(window: &Window) -> tauri::Result<(Rect, f64)> {
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
-    let area = Rect::new(
-        0.0,
-        TOOLBAR_HEIGHT,
-        size.width,
-        (size.height - TOOLBAR_HEIGHT).max(0.0),
-    );
-    Ok((area, size.width))
+fn view(workspace: &Workspace) -> TabsView {
+    TabsView {
+        tabs: workspace.tabs(),
+        panes: workspace.panes(),
+    }
 }
 
-fn create_account_webview(
-    window: &Window,
-    data_dir: &Path,
-    account: &Account,
-    placement: &Placement,
-) -> CommandResult<()> {
-    let url = account.url.parse().map_err(to_error)?;
-    let profile = profile_for(data_dir, account.id);
-    let builder = WebviewBuilder::new(webview_label(account.id), WebviewUrl::External(url))
-        .initialization_script(initialization_script(placement.policy))
+fn create_tab_webview(window: &Window, data_dir: &Path, tab: &TabState) -> CommandResult<()> {
+    let url = tab.account.url.parse().map_err(to_error)?;
+    let profile = profile_for(data_dir, tab.account.id);
+    let builder = WebviewBuilder::new(webview_label(tab.account.id), WebviewUrl::External(url))
+        .initialization_script(initialization_script(tab.policy))
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .on_page_load(|webview, payload| {
             // A reload restarts the runtime with the initial policy; re-send the current one.
@@ -92,9 +97,7 @@ fn create_account_webview(
             if let Some(id) = account_id_from_label(webview.label()) {
                 let state = webview.app_handle().state::<AppState>();
                 state.applied.lock().unwrap().remove(&id);
-                if let Ok(window) = main_window(webview.app_handle()) {
-                    let _ = relayout(&window, &state);
-                }
+                let _ = sync(webview.app_handle(), &state);
             }
         });
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -102,87 +105,107 @@ fn create_account_webview(
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let builder = builder.data_directory(profile.data_dir);
 
-    let bounds = placement.bounds;
     window
         .add_child(
             builder,
-            LogicalPosition::new(bounds.x, bounds.y),
-            LogicalSize::new(bounds.width, bounds.height),
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(PARKED_SIZE, PARKED_SIZE),
         )
         .map_err(to_error)?;
     Ok(())
 }
 
-/// Moves every webview to its slot and pushes changed policies to the pages.
-fn relayout(window: &Window, state: &AppState) -> tauri::Result<()> {
-    let (area, width) = content_area(window)?;
-    let app = window.app_handle();
-    if let Some(ui) = app.get_webview(UI_WEBVIEW) {
-        ui.set_position(LogicalPosition::new(0.0, 0.0))?;
-        ui.set_size(LogicalSize::new(width, TOOLBAR_HEIGHT))?;
-    }
-    let placements = state.workspace.lock().unwrap().placements(area);
+/// Moves every tab webview into its pane (or parks it) and pushes changed policies.
+fn sync(app: &AppHandle, state: &AppState) -> CommandResult<()> {
+    let tabs = state.workspace.lock().unwrap().tabs();
+    let rects = state.pane_rects.lock().unwrap().clone();
     let mut applied = state.applied.lock().unwrap();
-    for placement in placements {
-        let Some(webview) = app.get_webview(&webview_label(placement.account)) else {
+    for tab in tabs {
+        let Some(webview) = app.get_webview(&webview_label(tab.account.id)) else {
             continue;
         };
-        let bounds = placement.bounds;
-        webview.set_position(LogicalPosition::new(bounds.x, bounds.y))?;
-        webview.set_size(LogicalSize::new(bounds.width, bounds.height))?;
-        if applied.get(&placement.account) != Some(&placement.policy) {
-            webview.eval(apply_policy_script(placement.policy))?;
-            applied.insert(placement.account, placement.policy);
+        let bounds = tab
+            .pane
+            .and_then(|pane| rects.get(pane).copied())
+            .unwrap_or(Rect::new(0.0, 0.0, PARKED_SIZE, PARKED_SIZE));
+        webview
+            .set_position(LogicalPosition::new(bounds.x, bounds.y))
+            .map_err(to_error)?;
+        webview
+            .set_size(LogicalSize::new(
+                bounds.width.max(PARKED_SIZE),
+                bounds.height.max(PARKED_SIZE),
+            ))
+            .map_err(to_error)?;
+        if applied.get(&tab.account.id) != Some(&tab.policy) {
+            webview
+                .eval(apply_policy_script(tab.policy))
+                .map_err(to_error)?;
+            applied.insert(tab.account.id, tab.policy);
         }
     }
     Ok(())
 }
 
-#[tauri::command]
-async fn list_accounts(state: State<'_, AppState>) -> CommandResult<Vec<Account>> {
-    Ok(state.workspace.lock().unwrap().store().accounts().to_vec())
+/// Applies `change` to the workspace, persists it, re-syncs the webviews and returns the new view.
+fn update(
+    app: &AppHandle,
+    state: &AppState,
+    change: impl FnOnce(&mut Workspace) -> Result<(), String>,
+) -> CommandResult<TabsView> {
+    let view = {
+        let mut workspace = state.workspace.lock().unwrap();
+        change(&mut workspace)?;
+        save_workspace(&state.data_dir, &workspace)?;
+        view(&workspace)
+    };
+    sync(app, state)?;
+    Ok(view)
+}
+
+fn parse_id(id: &str) -> CommandResult<AccountId> {
+    id.parse().map_err(to_error)
 }
 
 #[tauri::command]
-async fn add_account(
+async fn get_tabs(state: State<'_, AppState>) -> CommandResult<TabsView> {
+    Ok(view(&state.workspace.lock().unwrap()))
+}
+
+#[tauri::command]
+async fn add_tab(
     app: AppHandle,
     state: State<'_, AppState>,
     label: String,
     url: Option<String>,
-) -> CommandResult<Account> {
-    let window = main_window(&app)?;
-    let (area, _) = content_area(&window).map_err(to_error)?;
-    let (account, placement) = {
+) -> CommandResult<TabsView> {
+    let tab = {
         let mut workspace = state.workspace.lock().unwrap();
         let account = workspace.add(&label, url.as_deref()).map_err(to_error)?;
-        save_store(&state.data_dir, workspace.store()).map_err(to_error)?;
-        let placement = workspace
-            .placement_of(account.id, area)
-            .expect("account was just added");
-        (account, placement)
+        save_workspace(&state.data_dir, &workspace)?;
+        workspace
+            .tabs()
+            .into_iter()
+            .find(|t| t.account.id == account.id)
+            .expect("tab was just added")
     };
-    create_account_webview(&window, &state.data_dir, &account, &placement)?;
+    create_tab_webview(&main_window(&app)?, &state.data_dir, &tab)?;
     state
         .applied
         .lock()
         .unwrap()
-        .insert(account.id, placement.policy);
-    relayout(&window, &state).map_err(to_error)?;
-    Ok(account)
+        .insert(tab.account.id, tab.policy);
+    update(&app, &state, |_| Ok(()))
 }
 
 #[tauri::command]
-async fn remove_account(
+async fn close_tab(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> CommandResult<()> {
-    let id: AccountId = id.parse().map_err(to_error)?;
-    {
-        let mut workspace = state.workspace.lock().unwrap();
-        workspace.remove(id).map_err(to_error)?;
-        save_store(&state.data_dir, workspace.store()).map_err(to_error)?;
-    }
+) -> CommandResult<TabsView> {
+    let id = parse_id(&id)?;
+    let view = update(&app, &state, |ws| ws.remove(id).map(drop).map_err(to_error))?;
     state.applied.lock().unwrap().remove(&id);
     if let Some(webview) = app.get_webview(&webview_label(id)) {
         webview.close().map_err(to_error)?;
@@ -197,45 +220,87 @@ async fn remove_account(
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     });
-    relayout(&main_window(&app)?, &state).map_err(to_error)
+    Ok(view)
 }
 
 #[tauri::command]
-async fn focus_account(
+async fn set_panes(
     app: AppHandle,
     state: State<'_, AppState>,
-    id: Option<String>,
-) -> CommandResult<()> {
-    let id = id
-        .map(|id| id.parse::<AccountId>())
-        .transpose()
-        .map_err(to_error)?;
-    state
-        .workspace
-        .lock()
-        .unwrap()
-        .focus(id)
-        .map_err(to_error)?;
-    let window = main_window(&app)?;
-    relayout(&window, &state).map_err(to_error)?;
-    if let Some(webview) = id.and_then(|id| app.get_webview(&webview_label(id))) {
-        webview.set_focus().map_err(to_error)?;
-    }
-    Ok(())
+    count: u8,
+) -> CommandResult<TabsView> {
+    let panes = PaneCount::try_from(count)?;
+    update(&app, &state, |ws| {
+        ws.set_panes(panes);
+        Ok(())
+    })
 }
 
 #[tauri::command]
-async fn reload_account(app: AppHandle, id: String) -> CommandResult<()> {
-    let id: AccountId = id.parse().map_err(to_error)?;
+async fn show_in_pane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    pane: usize,
+    id: String,
+) -> CommandResult<TabsView> {
+    let id = parse_id(&id)?;
+    update(&app, &state, |ws| {
+        ws.show_in_pane(pane, id).map_err(to_error)
+    })
+}
+
+#[tauri::command]
+async fn set_muted(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    muted: bool,
+) -> CommandResult<TabsView> {
+    let id = parse_id(&id)?;
+    update(&app, &state, |ws| ws.set_muted(id, muted).map_err(to_error))
+}
+
+#[tauri::command]
+async fn set_pinned(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    pinned: bool,
+) -> CommandResult<TabsView> {
+    let id = parse_id(&id)?;
+    update(&app, &state, |ws| {
+        ws.set_pinned(id, pinned).map_err(to_error)
+    })
+}
+
+#[tauri::command]
+async fn reload_tab(app: AppHandle, id: String) -> CommandResult<()> {
     let webview = app
-        .get_webview(&webview_label(id))
-        .ok_or("account not found")?;
+        .get_webview(&webview_label(parse_id(&id)?))
+        .ok_or("tab not found")?;
     webview.reload().map_err(to_error)
 }
 
 #[tauri::command]
+async fn set_pane_rects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rects: Vec<Rect>,
+) -> CommandResult<()> {
+    *state.pane_rects.lock().unwrap() = rects;
+    sync(&app, &state)
+}
+
+#[tauri::command]
 async fn usage_report(state: State<'_, AppState>) -> CommandResult<UsageReport> {
-    let snapshot = state.sampler.lock().unwrap().snapshot();
+    let (snapshot, system_memory_bytes, cpu_count) = {
+        let mut sampler = state.sampler.lock().unwrap();
+        (
+            sampler.snapshot(),
+            sampler.total_memory(),
+            sampler.cpu_count(),
+        )
+    };
     let profiles: Vec<_> = state
         .workspace
         .lock()
@@ -245,63 +310,60 @@ async fn usage_report(state: State<'_, AppState>) -> CommandResult<UsageReport> 
         .iter()
         .map(|a| (a.id, profile_for(&state.data_dir, a.id).data_dir))
         .collect();
-    Ok(metrics::usage_report(
-        &snapshot,
-        std::process::id(),
-        &profiles,
-    ))
+    Ok(UsageReport {
+        system_memory_bytes,
+        cpu_count,
+        ..metrics::usage_report(&snapshot, std::process::id(), &profiles)
+    })
+}
+
+fn build_main_window(app: &tauri::App) -> tauri::Result<Window> {
+    let builder = WindowBuilder::new(app, MAIN_WINDOW)
+        .title("IdleHub")
+        .inner_size(1440.0, 900.0)
+        .min_inner_size(800.0, 560.0);
+    // The UI draws its own title bar; macOS keeps the native traffic lights over it.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false);
+    builder.build()
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
-    let workspace = Workspace::new(load_store(&data_dir));
+    let workspace = load_workspace(&data_dir);
+    let tabs = workspace.tabs();
     app.manage(AppState {
         data_dir: data_dir.clone(),
         workspace: Mutex::new(workspace),
+        pane_rects: Mutex::new(Vec::new()),
         applied: Mutex::new(HashMap::new()),
         sampler: Mutex::new(Sampler::new()),
     });
 
-    let window = WindowBuilder::new(app, MAIN_WINDOW)
-        .title("IdleHub")
-        .inner_size(1280.0, 844.0)
-        .min_inner_size(640.0, 480.0)
-        .build()?;
-    let (area, width) = content_area(&window)?;
+    let window = build_main_window(app)?;
+    let size = window
+        .inner_size()?
+        .to_logical::<f64>(window.scale_factor()?);
+    // Created first so the game webviews stack above it.
     window.add_child(
-        WebviewBuilder::new(UI_WEBVIEW, WebviewUrl::App("index.html".into())),
+        WebviewBuilder::new(UI_WEBVIEW, WebviewUrl::App("index.html".into())).auto_resize(),
         LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(width, TOOLBAR_HEIGHT),
+        size,
     )?;
 
     let state = app.state::<AppState>();
-    let (accounts, placements) = {
-        let workspace = state.workspace.lock().unwrap();
-        (
-            workspace.store().accounts().to_vec(),
-            workspace.placements(area),
-        )
-    };
-    for (account, placement) in accounts.iter().zip(&placements) {
-        create_account_webview(&window, &data_dir, account, placement)?;
+    for tab in &tabs {
+        create_tab_webview(&window, &data_dir, tab)?;
         state
             .applied
             .lock()
             .unwrap()
-            .insert(account.id, placement.policy);
+            .insert(tab.account.id, tab.policy);
     }
-
-    let handle = app.handle().clone();
-    window.on_window_event(move |event| {
-        if matches!(
-            event,
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
-        ) {
-            if let Ok(window) = main_window(&handle) {
-                let _ = relayout(&window, &handle.state::<AppState>());
-            }
-        }
-    });
     Ok(())
 }
 
@@ -310,11 +372,15 @@ pub fn run() {
     tauri::Builder::default()
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
-            list_accounts,
-            add_account,
-            remove_account,
-            focus_account,
-            reload_account,
+            get_tabs,
+            add_tab,
+            close_tab,
+            set_panes,
+            show_in_pane,
+            set_muted,
+            set_pinned,
+            reload_tab,
+            set_pane_rects,
             usage_report,
         ])
         .run(tauri::generate_context!())
