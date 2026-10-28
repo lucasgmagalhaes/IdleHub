@@ -2,6 +2,7 @@ package com.lucasgmagalhaes.idlehub.tabs
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -34,6 +35,14 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
 
     private val tabs = mutableMapOf<String, Tab>()
     private val layer = FrameLayout(activity)
+    private val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    init {
+        // No webview exists yet, so profiles a previous run could not delete can go now.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            pendingDeletes().forEach { deleteProfile(it, attemptsLeft = 1) }
+        }
+    }
 
     val size: Int
         get() = tabs.size
@@ -81,20 +90,36 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
 
     /** Closes the tab for good and erases its profile: the account is logged out. */
     fun forget(id: String) {
-        val profile = tabs[id]?.profile ?: return
+        val tab = tabs[id] ?: return
+        // The profile itself can only be deleted once no WebView holds it, which may
+        // take until the next launch; the login and storage are erased right away.
+        ProfileStore.getInstance().getProfile(tab.profile)?.let {
+            it.cookieManager.removeAllCookies(null)
+            it.webStorage.deleteAllData()
+        }
+        tab.webView.clearCache(true)
         close(id)
-        deleteProfile(profile, PROFILE_DELETE_ATTEMPTS)
+        setPending(tab.profile, true)
+        deleteProfile(tab.profile, PROFILE_DELETE_ATTEMPTS)
     }
 
-    /** A destroyed WebView releases its profile asynchronously; retry until it is free. */
+    /** Retries while the destroyed WebView still holds the profile; gives up until the next launch. */
     private fun deleteProfile(name: String, attemptsLeft: Int) {
         try {
             ProfileStore.getInstance().deleteProfile(name)
+            setPending(name, false)
         } catch (e: IllegalStateException) {
             if (attemptsLeft > 1) {
                 Handler(Looper.getMainLooper()).postDelayed({ deleteProfile(name, attemptsLeft - 1) }, PROFILE_DELETE_RETRY_MS)
             }
         }
+    }
+
+    private fun pendingDeletes(): Set<String> = prefs.getStringSet(PENDING_DELETES, emptySet()).orEmpty()
+
+    private fun setPending(profile: String, pending: Boolean) {
+        val next = if (pending) pendingDeletes() + profile else pendingDeletes() - profile
+        prefs.edit().putStringSet(PENDING_DELETES, next).apply()
     }
 
     fun closeAll() {
@@ -179,6 +204,8 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
     private companion object {
         const val PROFILE_DELETE_ATTEMPTS = 10
         const val PROFILE_DELETE_RETRY_MS = 300L
+        const val PREFS = "idlehub-tabs"
+        const val PENDING_DELETES = "pendingProfileDeletes"
     }
 
     /** A rect in CSS pixels of the UI webview. */

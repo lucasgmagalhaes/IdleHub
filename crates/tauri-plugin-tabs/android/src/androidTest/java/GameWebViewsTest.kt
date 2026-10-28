@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -106,16 +107,21 @@ class GameWebViewsTest {
     }
 
     @Test
-    fun forgettingATabDeletesItsProfile() {
+    fun forgettingATabErasesItsLoginAndStorage() {
         // Closing a tab promises the user that its login and data are erased.
-        scenario.onActivity { it.games.open("gone", game, "profile-forget", "") }
-        Thread.sleep(1_000)
-        scenario.onActivity { it.games.forget("gone") }
+        val page = "https://example.com/"
+        scenario.onActivity { it.games.open("gone", page, "profile-forget", "") }
         Thread.sleep(3_000)
-        scenario.onActivity {
-            assertNull(it.games.webViewOf("gone"))
-            assertNull(ProfileStore.getInstance().getProfile("profile-forget"))
-        }
+        eval("gone", "localStorage.setItem('who','gone'); document.cookie='who=gone; max-age=3600'; 'ok'")
+        scenario.onActivity { it.games.forget("gone") }
+        Thread.sleep(2_000)
+        scenario.onActivity { assertNull(it.games.webViewOf("gone")) }
+
+        // Whether or not the profile could be deleted yet, nothing of the account is left.
+        scenario.onActivity { it.games.open("again", page, "profile-forget", "") }
+        Thread.sleep(3_000)
+        assertEquals("null", eval("again", "localStorage.getItem('who')"))
+        assertFalse(eval("again", "document.cookie").contains("who=gone"))
     }
 
     @Test
