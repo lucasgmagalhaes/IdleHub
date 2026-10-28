@@ -2,7 +2,17 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Commands available to the IdleHub toolbar only. Game webviews get no IPC access.",
-  "windows": ["main"],
-  "webviews": ["ui"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main"
+  ],
+  "webviews": [
+    "ui"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging"
+  ]
 }
