@@ -65,29 +65,41 @@ fn view(workspace: &Workspace) -> TabsView {
 
 /// Creates missing webviews, moves every tab into its pane (or parks it) and
 /// pushes changed policies to the pages.
+///
+/// A tab that fails does not hold up the others; the first error is returned
+/// and the failed step is retried on the next sync.
 fn sync(app: &AppHandle, state: &AppState) -> CommandResult<()> {
     let tabs = state.workspace.lock().unwrap().tabs();
     let rects = state.pane_rects.lock().unwrap().clone();
     let mut opened = state.opened.lock().unwrap();
     let mut applied = state.applied.lock().unwrap();
-    let newly_opened = tabs.iter().any(|tab| !opened.contains(&tab.account.id));
+    let mut first_error = None;
+    let mut newly_opened = false;
     for tab in &tabs {
         let id = tab.account.id;
-        if opened.insert(id) {
-            host::open(app, &state.data_dir, tab)?;
-            // The initialization script already carries the current policy.
-            applied.insert(id, tab.policy);
-        }
-        host::place(app, id, tab.pane.and_then(|pane| rects.get(pane).copied()))?;
-        if applied.get(&id) != Some(&tab.policy) {
-            host::apply_policy(app, id, tab.policy)?;
-            applied.insert(id, tab.policy);
+        let result = (|| {
+            if !opened.contains(&id) {
+                host::open(app, &state.data_dir, tab)?;
+                opened.insert(id);
+                newly_opened = true;
+                // The initialization script already carries the current policy.
+                applied.insert(id, tab.policy);
+            }
+            host::place(app, id, tab.pane.and_then(|pane| rects.get(pane).copied()))?;
+            if applied.get(&id) != Some(&tab.policy) {
+                host::apply_policy(app, id, tab.policy)?;
+                applied.insert(id, tab.policy);
+            }
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result {
+            first_error.get_or_insert(format!("{}: {error}", tab.account.label));
         }
     }
     if newly_opened {
-        host::tabs_running(app, tabs.len())?;
+        host::tabs_running(app, opened.len())?;
     }
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Applies `change` to the workspace, persists it, re-syncs the webviews and returns the new view.
