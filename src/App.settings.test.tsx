@@ -62,6 +62,26 @@ describe("settings", () => {
     expect(options.map((o) => o.getAttribute("value"))).toEqual(["60", "45", "30", "24", "20", "15", "10", "5", "2", "1"]);
   });
 
+  it("can still be left when the frame caps fail to load", async () => {
+    const { backend, user } = setup();
+    backend.getSettings.mockRejectedValueOnce("settings unavailable");
+    const settings = await openSettings(user);
+
+    expect(await within(settings).findByRole("alert")).toHaveTextContent("settings unavailable");
+    await user.click(within(settings).getByRole("button", { name: "Cancelar" }));
+    expect(await screen.findAllByRole("region", { name: /^Painel/ })).toHaveLength(2);
+  });
+
+  it("shows a saved frame cap that is not among the offered ones", async () => {
+    const { backend, user } = setup();
+    backend.getSettings.mockResolvedValueOnce({ singlePaneFps: 50, multiPaneFps: 30, hiddenFps: 1 });
+    const settings = await openSettings(user);
+
+    expect(within(settings).getByLabelText("Painel único")).toHaveValue("50");
+    await user.click(within(settings).getByRole("button", { name: "Salvar" }));
+    expect(backend.setSettings).toHaveBeenCalledWith({ singlePaneFps: 50, multiPaneFps: 30, hiddenFps: 1 });
+  });
+
   it("is reachable on phones too", async () => {
     const { user } = setup("mobile");
     expect(await openSettings(user)).toBeInTheDocument();

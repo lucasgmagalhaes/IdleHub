@@ -11,6 +11,11 @@ const FIELDS: { key: keyof Settings; label: string; help: string }[] = [
   { key: "hiddenFps", label: t.hiddenFps, help: t.hiddenHelp },
 ];
 
+/** The offered caps plus `current` when it was set some other way, so the field shows the real value. */
+function optionsWith(current: number): number[] {
+  return FPS_OPTIONS.includes(current) ? FPS_OPTIONS : [...FPS_OPTIONS, current].sort((a, b) => b - a);
+}
+
 interface SettingsViewProps {
   load(): Promise<Settings>;
   onSave(settings: Settings): Promise<boolean>;
@@ -23,10 +28,14 @@ interface SettingsViewProps {
  */
 export function SettingsView({ load, onSave, onClose }: SettingsViewProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    load().then((s) => !cancelled && setSettings(s), () => {});
+    load().then(
+      (s) => !cancelled && setSettings(s),
+      (e) => !cancelled && setError(String(e)),
+    );
     return () => {
       cancelled = true;
     };
@@ -40,8 +49,13 @@ export function SettingsView({ load, onSave, onClose }: SettingsViewProps) {
   return (
     <section className="settings" aria-label={t.settings}>
       <h2>{t.settings}</h2>
-      {settings && (
-        <form onSubmit={submit}>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+      <form onSubmit={submit}>
+        {settings && (
           <fieldset>
             <legend>{t.frameRates}</legend>
             <p className="help">{t.frameRatesHelp}</p>
@@ -53,7 +67,7 @@ export function SettingsView({ load, onSave, onClose }: SettingsViewProps) {
                   value={String(settings[key])}
                   onChange={(e) => setSettings({ ...settings, [key]: Number(e.target.value) })}
                 >
-                  {FPS_OPTIONS.map((fps) => (
+                  {optionsWith(settings[key]).map((fps) => (
                     <option key={fps} value={fps}>
                       {t.fps(fps)}
                     </option>
@@ -63,16 +77,17 @@ export function SettingsView({ load, onSave, onClose }: SettingsViewProps) {
               </div>
             ))}
           </fieldset>
-          <div className="settings-actions">
-            <button type="button" onClick={onClose}>
-              {t.cancel}
-            </button>
-            <button type="submit" className="primary">
-              {t.save}
-            </button>
-          </div>
-        </form>
-      )}
+        )}
+        {/* Always offered, so a failed load never traps the user here. */}
+        <div className="settings-actions">
+          <button type="button" onClick={onClose}>
+            {t.cancel}
+          </button>
+          <button type="submit" className="primary" disabled={!settings}>
+            {t.save}
+          </button>
+        </div>
+      </form>
     </section>
   );
 }
