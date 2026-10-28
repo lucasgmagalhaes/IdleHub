@@ -1,7 +1,10 @@
+#[cfg(any(mobile, test))]
+mod copy;
+mod host;
 mod sampler;
 mod scripts;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -12,27 +15,21 @@ use idlehub_core::policy::RenderPolicy;
 use idlehub_core::profile::profile_for;
 use idlehub_core::workspace::{TabState, Workspace};
 use serde::Serialize;
-use tauri::utils::config::BackgroundThrottlingPolicy;
-use tauri::webview::{PageLoadEvent, WebviewBuilder};
-use tauri::window::WindowBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, Window};
+use tauri::{AppHandle, Manager, State};
 
 use sampler::Sampler;
-use scripts::{account_id_from_label, apply_policy_script, initialization_script, webview_label};
 
-const MAIN_WINDOW: &str = "main";
-const UI_WEBVIEW: &str = "ui";
 const WORKSPACE_FILE: &str = "workspace.json";
 const LEGACY_ACCOUNTS_FILE: &str = "accounts.json";
-/// Tabs without a pane are shrunk to this size instead of hidden: hiding a
-/// webview makes WebView2 / WebKit throttle its timers, which would stall the game.
-const PARKED_SIZE: f64 = 1.0;
 
 struct AppState {
     data_dir: PathBuf,
     workspace: Mutex<Workspace>,
     /// Content area of each pane, reported by the UI in pane order.
     pane_rects: Mutex<Vec<Rect>>,
+    /// Tabs whose webview exists. Webviews are created lazily on the first sync,
+    /// once the UI is up (the mobile plugin needs the UI webview first).
+    opened: Mutex<HashSet<AccountId>>,
     /// Last policy sent to each page, so layout changes do not spam `eval`.
     applied: Mutex<HashMap<AccountId, RenderPolicy>>,
     sampler: Mutex<Sampler>,
@@ -54,14 +51,19 @@ fn to_error(error: impl std::fmt::Display) -> String {
 
 fn load_workspace(data_dir: &Path) -> Workspace {
     let read = |file| std::fs::read_to_string(data_dir.join(file)).ok();
-    if let Some(workspace) = read(WORKSPACE_FILE).and_then(|json| Workspace::from_json(&json).ok())
-    {
-        return workspace;
+    let mut workspace = read(WORKSPACE_FILE)
+        .and_then(|json| Workspace::from_json(&json).ok())
+        .unwrap_or_else(|| {
+            let store = read(LEGACY_ACCOUNTS_FILE)
+                .and_then(|json| AccountStore::from_json(&json).ok())
+                .unwrap_or_default();
+            Workspace::new(store)
+        });
+    // Phones show one tab at a time; the others keep running hidden.
+    if cfg!(mobile) {
+        workspace.set_panes(PaneCount::new(1).expect("1 is a valid pane count"));
     }
-    let store = read(LEGACY_ACCOUNTS_FILE)
-        .and_then(|json| AccountStore::from_json(&json).ok())
-        .unwrap_or_default();
-    Workspace::new(store)
+    workspace
 }
 
 fn save_workspace(data_dir: &Path, workspace: &Workspace) -> CommandResult<()> {
@@ -71,11 +73,6 @@ fn save_workspace(data_dir: &Path, workspace: &Workspace) -> CommandResult<()> {
     std::fs::rename(tmp, data_dir.join(WORKSPACE_FILE)).map_err(to_error)
 }
 
-fn main_window(app: &AppHandle) -> CommandResult<Window> {
-    app.get_window(MAIN_WINDOW)
-        .ok_or_else(|| "main window is gone".to_owned())
-}
-
 fn view(workspace: &Workspace) -> TabsView {
     TabsView {
         tabs: workspace.tabs(),
@@ -83,66 +80,29 @@ fn view(workspace: &Workspace) -> TabsView {
     }
 }
 
-fn create_tab_webview(window: &Window, data_dir: &Path, tab: &TabState) -> CommandResult<()> {
-    let url = tab.account.url.parse().map_err(to_error)?;
-    let profile = profile_for(data_dir, tab.account.id);
-    let builder = WebviewBuilder::new(webview_label(tab.account.id), WebviewUrl::External(url))
-        .initialization_script(initialization_script(tab.policy))
-        .background_throttling(BackgroundThrottlingPolicy::Disabled)
-        .on_page_load(|webview, payload| {
-            // A reload restarts the runtime with the initial policy; re-send the current one.
-            if payload.event() != PageLoadEvent::Finished {
-                return;
-            }
-            if let Some(id) = account_id_from_label(webview.label()) {
-                let state = webview.app_handle().state::<AppState>();
-                state.applied.lock().unwrap().remove(&id);
-                let _ = sync(webview.app_handle(), &state);
-            }
-        });
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    let builder = builder.data_store_identifier(profile.store_identifier);
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    let builder = builder.data_directory(profile.data_dir);
-
-    window
-        .add_child(
-            builder,
-            LogicalPosition::new(0.0, 0.0),
-            LogicalSize::new(PARKED_SIZE, PARKED_SIZE),
-        )
-        .map_err(to_error)?;
-    Ok(())
-}
-
-/// Moves every tab webview into its pane (or parks it) and pushes changed policies.
+/// Creates missing webviews, moves every tab into its pane (or parks it) and
+/// pushes changed policies to the pages.
 fn sync(app: &AppHandle, state: &AppState) -> CommandResult<()> {
     let tabs = state.workspace.lock().unwrap().tabs();
     let rects = state.pane_rects.lock().unwrap().clone();
+    let mut opened = state.opened.lock().unwrap();
     let mut applied = state.applied.lock().unwrap();
-    for tab in tabs {
-        let Some(webview) = app.get_webview(&webview_label(tab.account.id)) else {
-            continue;
-        };
-        let bounds = tab
-            .pane
-            .and_then(|pane| rects.get(pane).copied())
-            .unwrap_or(Rect::new(0.0, 0.0, PARKED_SIZE, PARKED_SIZE));
-        webview
-            .set_position(LogicalPosition::new(bounds.x, bounds.y))
-            .map_err(to_error)?;
-        webview
-            .set_size(LogicalSize::new(
-                bounds.width.max(PARKED_SIZE),
-                bounds.height.max(PARKED_SIZE),
-            ))
-            .map_err(to_error)?;
-        if applied.get(&tab.account.id) != Some(&tab.policy) {
-            webview
-                .eval(apply_policy_script(tab.policy))
-                .map_err(to_error)?;
-            applied.insert(tab.account.id, tab.policy);
+    let newly_opened = tabs.iter().any(|tab| !opened.contains(&tab.account.id));
+    for tab in &tabs {
+        let id = tab.account.id;
+        if opened.insert(id) {
+            host::open(app, &state.data_dir, tab)?;
+            // The initialization script already carries the current policy.
+            applied.insert(id, tab.policy);
         }
+        host::place(app, id, tab.pane.and_then(|pane| rects.get(pane).copied()))?;
+        if applied.get(&id) != Some(&tab.policy) {
+            host::apply_policy(app, id, tab.policy)?;
+            applied.insert(id, tab.policy);
+        }
+    }
+    if newly_opened {
+        host::tabs_running(app, tabs.len())?;
     }
     Ok(())
 }
@@ -179,23 +139,9 @@ async fn add_tab(
     label: String,
     url: Option<String>,
 ) -> CommandResult<TabsView> {
-    let tab = {
-        let mut workspace = state.workspace.lock().unwrap();
-        let account = workspace.add(&label, url.as_deref()).map_err(to_error)?;
-        save_workspace(&state.data_dir, &workspace)?;
-        workspace
-            .tabs()
-            .into_iter()
-            .find(|t| t.account.id == account.id)
-            .expect("tab was just added")
-    };
-    create_tab_webview(&main_window(&app)?, &state.data_dir, &tab)?;
-    state
-        .applied
-        .lock()
-        .unwrap()
-        .insert(tab.account.id, tab.policy);
-    update(&app, &state, |_| Ok(()))
+    update(&app, &state, |ws| {
+        ws.add(&label, url.as_deref()).map(drop).map_err(to_error)
+    })
 }
 
 #[tauri::command]
@@ -207,9 +153,10 @@ async fn close_tab(
     let id = parse_id(&id)?;
     let view = update(&app, &state, |ws| ws.remove(id).map(drop).map_err(to_error))?;
     state.applied.lock().unwrap().remove(&id);
-    if let Some(webview) = app.get_webview(&webview_label(id)) {
-        webview.close().map_err(to_error)?;
+    if state.opened.lock().unwrap().remove(&id) {
+        host::close(&app, id)?;
     }
+    host::tabs_running(&app, view.tabs.len())?;
     // The browser may still hold the profile for a moment after closing.
     let profile_dir = profile_for(&state.data_dir, id).data_dir;
     std::thread::spawn(move || {
@@ -275,10 +222,7 @@ async fn set_pinned(
 
 #[tauri::command]
 async fn reload_tab(app: AppHandle, id: String) -> CommandResult<()> {
-    let webview = app
-        .get_webview(&webview_label(parse_id(&id)?))
-        .ok_or("tab not found")?;
-    webview.reload().map_err(to_error)
+    host::reload(&app, parse_id(&id)?)
 }
 
 #[tauri::command]
@@ -317,59 +261,26 @@ async fn usage_report(state: State<'_, AppState>) -> CommandResult<UsageReport> 
     })
 }
 
-fn build_main_window(app: &tauri::App) -> tauri::Result<Window> {
-    let builder = WindowBuilder::new(app, MAIN_WINDOW)
-        .title("IdleHub")
-        .inner_size(1440.0, 900.0)
-        .min_inner_size(800.0, 560.0);
-    // The UI draws its own title bar; macOS keeps the native traffic lights over it.
-    #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.decorations(false);
-    builder.build()
-}
-
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
-    let workspace = load_workspace(&data_dir);
-    let tabs = workspace.tabs();
     app.manage(AppState {
-        data_dir: data_dir.clone(),
-        workspace: Mutex::new(workspace),
+        workspace: Mutex::new(load_workspace(&data_dir)),
+        data_dir,
         pane_rects: Mutex::new(Vec::new()),
+        opened: Mutex::new(HashSet::new()),
         applied: Mutex::new(HashMap::new()),
         sampler: Mutex::new(Sampler::new()),
     });
-
-    let window = build_main_window(app)?;
-    let size = window
-        .inner_size()?
-        .to_logical::<f64>(window.scale_factor()?);
-    // Created first so the game webviews stack above it.
-    window.add_child(
-        WebviewBuilder::new(UI_WEBVIEW, WebviewUrl::App("index.html".into())).auto_resize(),
-        LogicalPosition::new(0.0, 0.0),
-        size,
-    )?;
-
-    let state = app.state::<AppState>();
-    for tab in &tabs {
-        create_tab_webview(&window, &data_dir, tab)?;
-        state
-            .applied
-            .lock()
-            .unwrap()
-            .insert(tab.account.id, tab.policy);
-    }
+    host::create_window(app)?;
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_tabs::init());
+    builder
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             get_tabs,

@@ -1,17 +1,22 @@
 //! JavaScript snippets sent to the game webviews.
 
+#[cfg(any(desktop, test))]
 use idlehub_core::account::AccountId;
 use idlehub_core::policy::RenderPolicy;
 
 /// The bundled page runtime (see `inject/`), built by `pnpm build:inject`.
 pub const RUNTIME: &str = include_str!("../../dist-inject/inject.js");
 
+// Labels name Tauri child webviews, which only exist on desktop.
+#[cfg(any(desktop, test))]
 const LABEL_PREFIX: &str = "account-";
 
+#[cfg(any(desktop, test))]
 pub fn webview_label(id: AccountId) -> String {
     format!("{LABEL_PREFIX}{id}")
 }
 
+#[cfg(any(desktop, test))]
 pub fn account_id_from_label(label: &str) -> Option<AccountId> {
     label.strip_prefix(LABEL_PREFIX)?.parse().ok()
 }
