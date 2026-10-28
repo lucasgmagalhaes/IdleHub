@@ -114,11 +114,18 @@ pub fn reload(app: &AppHandle, id: AccountId) -> CommandResult<()> {
     webview.reload().map_err(to_error)
 }
 
+/// Closes a tab the user removed and erases its cookies and storage. The data
+/// folder is deleted afterwards by the caller, but macOS keeps profiles in a
+/// named data store that only the webview can clear.
 pub fn close(app: &AppHandle, id: AccountId) -> CommandResult<()> {
-    match app.get_webview(&webview_label(id)) {
-        Some(webview) => webview.close().map_err(to_error),
-        None => Ok(()),
+    let Some(webview) = app.get_webview(&webview_label(id)) else {
+        return Ok(());
+    };
+    // Queued before the close, so it runs while the webview still exists.
+    if let Err(error) = webview.clear_all_browsing_data() {
+        eprintln!("idlehub: failed to clear the data of a closed tab: {error}");
     }
+    webview.close().map_err(to_error)
 }
 
 /// Desktop processes are never suspended by the OS, so nothing to do.
