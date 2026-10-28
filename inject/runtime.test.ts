@@ -32,6 +32,29 @@ describe("installRuntime", () => {
     expect(installRuntime(win)).toBe(first);
   });
 
+  it("keeps the fields a partial policy leaves out", () => {
+    win.__IDLEHUB_POLICY__ = { maxFps: 30, muted: false };
+    const runtime = installRuntime(win);
+    runtime.apply({ muted: true } as never);
+    expect(runtime.policy).toEqual({ maxFps: 30, muted: true });
+  });
+
+  it("cannot be replaced or found by page scripts", () => {
+    const runtime = installRuntime(win);
+    expect(Object.keys(win)).not.toContain("__idlehub");
+    expect(() => {
+      (win as { __idlehub?: unknown }).__idlehub = undefined;
+    }).toThrow(TypeError);
+    expect(win.__idlehub).toBe(runtime);
+  });
+
+  it("hands the policy copy out read-only", () => {
+    const runtime = installRuntime(win);
+    const copy = runtime.policy;
+    copy.maxFps = 1;
+    expect(runtime.policy.maxFps).toBe(60);
+  });
+
   it("keeps the page visible", () => {
     installRuntime(win);
     expect(document.visibilityState).toBe("visible");
