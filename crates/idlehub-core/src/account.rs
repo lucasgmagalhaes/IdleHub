@@ -49,6 +49,16 @@ pub struct Account {
     pub id: AccountId,
     pub label: String,
     pub url: String,
+    /// Speaker toggle of the tab. New tabs start muted so several games never play at once.
+    #[serde(default = "default_muted")]
+    pub muted: bool,
+    /// Pinned tabs cannot be closed or moved out of their pane.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+fn default_muted() -> bool {
+    true
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -63,6 +73,8 @@ pub enum AccountError {
     InvalidUrl,
     #[error("account not found")]
     NotFound,
+    #[error("pinned tabs must be unpinned first")]
+    Pinned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +122,8 @@ impl AccountStore {
             id: AccountId::new(),
             label,
             url: url.to_owned(),
+            muted: true,
+            pinned: false,
         });
         Ok(self.accounts.last().expect("just pushed"))
     }
@@ -123,7 +137,35 @@ impl AccountStore {
 
     pub fn remove(&mut self, id: AccountId) -> Result<Account, AccountError> {
         let index = self.index_of(id).ok_or(AccountError::NotFound)?;
+        if self.accounts[index].pinned {
+            return Err(AccountError::Pinned);
+        }
         Ok(self.accounts.remove(index))
+    }
+
+    pub fn set_muted(&mut self, id: AccountId, muted: bool) -> Result<(), AccountError> {
+        self.get_mut(id)?.muted = muted;
+        Ok(())
+    }
+
+    pub fn set_pinned(&mut self, id: AccountId, pinned: bool) -> Result<(), AccountError> {
+        self.get_mut(id)?.pinned = pinned;
+        Ok(())
+    }
+
+    /// Swaps the positions of two accounts. Positions decide which pane shows a tab.
+    pub fn swap(&mut self, a: AccountId, b: AccountId) -> Result<(), AccountError> {
+        let a = self.index_of(a).ok_or(AccountError::NotFound)?;
+        let b = self.index_of(b).ok_or(AccountError::NotFound)?;
+        self.accounts.swap(a, b);
+        Ok(())
+    }
+
+    fn get_mut(&mut self, id: AccountId) -> Result<&mut Account, AccountError> {
+        self.accounts
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or(AccountError::NotFound)
     }
 
     pub fn to_json(&self) -> String {
@@ -258,6 +300,66 @@ mod tests {
         assert_eq!(store.remove(a).unwrap().label, "A");
         assert_eq!(store.remove(a), Err(AccountError::NotFound));
         assert!(store.add("B", None).is_ok());
+    }
+
+    #[test]
+    fn new_tabs_start_muted_and_unpinned() {
+        let mut store = AccountStore::default();
+        let account = store.add("A", None).unwrap();
+        assert!(account.muted);
+        assert!(!account.pinned);
+    }
+
+    #[test]
+    fn mute_and_pin_can_be_toggled() {
+        let mut store = AccountStore::default();
+        let id = store.add("A", None).unwrap().id;
+        store.set_muted(id, false).unwrap();
+        store.set_pinned(id, true).unwrap();
+        let account = store.get(id).unwrap();
+        assert!(!account.muted);
+        assert!(account.pinned);
+        assert_eq!(
+            store.set_muted(AccountId::new(), true),
+            Err(AccountError::NotFound)
+        );
+        assert_eq!(
+            store.set_pinned(AccountId::new(), true),
+            Err(AccountError::NotFound)
+        );
+    }
+
+    #[test]
+    fn pinned_tabs_cannot_be_removed() {
+        let mut store = AccountStore::default();
+        let id = store.add("A", None).unwrap().id;
+        store.set_pinned(id, true).unwrap();
+        assert_eq!(store.remove(id), Err(AccountError::Pinned));
+        store.set_pinned(id, false).unwrap();
+        assert!(store.remove(id).is_ok());
+    }
+
+    #[test]
+    fn swap_exchanges_positions() {
+        let mut store = AccountStore::default();
+        let a = store.add("A", None).unwrap().id;
+        let b = store.add("B", None).unwrap().id;
+        let c = store.add("C", None).unwrap().id;
+        store.swap(a, c).unwrap();
+        let order: Vec<_> = store.accounts().iter().map(|x| x.id).collect();
+        assert_eq!(order, vec![c, b, a]);
+        assert_eq!(store.swap(a, AccountId::new()), Err(AccountError::NotFound));
+    }
+
+    #[test]
+    fn older_files_without_mute_or_pin_still_load() {
+        let id = AccountId::new();
+        let json = format!(
+            r#"{{"max_accounts":4,"accounts":[{{"id":"{id}","label":"A","url":"https://x.y"}}]}}"#
+        );
+        let store = AccountStore::from_json(&json).unwrap();
+        assert!(store.get(id).unwrap().muted);
+        assert!(!store.get(id).unwrap().pinned);
     }
 
     #[test]
