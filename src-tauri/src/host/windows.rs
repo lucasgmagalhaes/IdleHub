@@ -48,18 +48,30 @@ fn separate_browsers() -> bool {
     std::env::var_os("IDLEHUB_WEBVIEW2_SEPARATE").is_some_and(|v| v != "0")
 }
 
-/// Runs `action` on the main thread; failures are logged since nobody awaits them.
+/// Runs `action` on the main thread. Nobody awaits it, so failures go to the UI
+/// as host errors, after `on_error` had a chance to undo bookkeeping.
+fn on_main_thread_or(
+    app: &AppHandle,
+    what: &'static str,
+    action: impl FnOnce() -> wry::Result<()> + Send + 'static,
+    on_error: impl FnOnce() + Send + 'static,
+) -> CommandResult<()> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = action() {
+            on_error();
+            crate::report(&handle, Err(format!("failed to {what}: {error}")));
+        }
+    })
+    .map_err(to_error)
+}
+
 fn on_main_thread(
     app: &AppHandle,
     what: &'static str,
     action: impl FnOnce() -> wry::Result<()> + Send + 'static,
 ) -> CommandResult<()> {
-    app.run_on_main_thread(move || {
-        if let Err(error) = action() {
-            eprintln!("idlehub: failed to {what}: {error}");
-        }
-    })
-    .map_err(to_error)
+    on_main_thread_or(app, what, action, || {})
 }
 
 fn with_tab(
@@ -94,36 +106,49 @@ pub fn open(app: &AppHandle, data_dir: &Path, tab: &TabState) -> CommandResult<(
     let id = tab.account.id;
     let url = tab.account.url.clone();
     let init_script = initialization_script(tab.policy);
-    on_main_thread(app, "open a tab", move || {
-        let webview = CONTEXT.with_borrow_mut(|context| {
-            let context = context.get_or_insert_with(|| WebContext::new(Some(shared_dir)));
-            WebViewBuilder::new_with_web_context(context)
-                .with_url(url)
-                .with_initialization_script(init_script)
-                .with_profile_name(id.to_string())
-                .with_bounds(wry_rect(Rect::new(0.0, 0.0, PARKED_SIZE, PARKED_SIZE)))
-                .with_on_page_load_handler(move |event, _| {
-                    // A reload restarts the runtime with the initial policy; re-send the current one.
-                    if matches!(event, PageLoadEvent::Finished) {
-                        let state = handle.state::<AppState>();
-                        state.applied.lock().unwrap().remove(&id);
-                        let _ = crate::sync(&handle, &state);
-                    }
-                })
-                .build_as_child(&window)
-        })?;
-        webview.set_memory_usage_level(MemoryUsageLevel::Low)?;
-        TABS.with_borrow_mut(|tabs| {
-            tabs.insert(
-                id,
-                GameTab {
-                    webview,
-                    parked: true,
-                },
-            )
+    let retry = app.clone();
+    let forget_opened = move || {
+        // Lets the next sync try again. Called on the main thread, possibly from
+        // inside a sync that holds the lock, so it must not wait for it here.
+        std::thread::spawn(move || {
+            retry.state::<AppState>().opened.lock().unwrap().remove(&id);
         });
-        Ok(())
-    })
+    };
+    on_main_thread_or(
+        app,
+        "open a tab",
+        move || {
+            let webview = CONTEXT.with_borrow_mut(|context| {
+                let context = context.get_or_insert_with(|| WebContext::new(Some(shared_dir)));
+                WebViewBuilder::new_with_web_context(context)
+                    .with_url(url)
+                    .with_initialization_script(init_script)
+                    .with_profile_name(id.to_string())
+                    .with_bounds(wry_rect(Rect::new(0.0, 0.0, PARKED_SIZE, PARKED_SIZE)))
+                    .with_on_page_load_handler(move |event, _| {
+                        // A reload restarts the runtime with the initial policy; re-send the current one.
+                        if matches!(event, PageLoadEvent::Finished) {
+                            let state = handle.state::<AppState>();
+                            state.applied.lock().unwrap().remove(&id);
+                            crate::report(&handle, crate::sync(&handle, &state));
+                        }
+                    })
+                    .build_as_child(&window)
+            })?;
+            webview.set_memory_usage_level(MemoryUsageLevel::Low)?;
+            TABS.with_borrow_mut(|tabs| {
+                tabs.insert(
+                    id,
+                    GameTab {
+                        webview,
+                        parked: true,
+                    },
+                )
+            });
+            Ok(())
+        },
+        forget_opened,
+    )
 }
 
 pub fn place(app: &AppHandle, id: AccountId, bounds: Option<Rect>) -> CommandResult<()> {
