@@ -95,7 +95,20 @@ async function runScenario(browser, scenario) {
 const browser = await chromium.launch();
 const results = [];
 for (const scenario of scenarios) results.push(await runScenario(browser, scenario));
+// The overhead check compares two numbers a few percent apart, and a shared CI
+// runner can drift more than that between two runs. Alternating the pair a few
+// times and comparing medians keeps that drift out of the verdict.
+const OVERHEAD_ROUNDS = Number(process.env.BENCH_OVERHEAD_ROUNDS ?? 3);
+const overheadCpu = { baseline: [], uncapped: [] };
+for (const r of results) if (r.name in overheadCpu) overheadCpu[r.name].push(r.processCpuPercent);
+for (let round = 1; round < OVERHEAD_ROUNDS; round++) {
+  for (const name of ["uncapped", "baseline"]) {
+    const scenario = scenarios.find((s) => s.name === name);
+    overheadCpu[name].push((await runScenario(browser, scenario)).processCpuPercent);
+  }
+}
 await browser.close();
+const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 const byName = Object.fromEntries(results.map((r) => [r.name, r]));
 const base = byName.baseline;
@@ -124,10 +137,9 @@ for (const r of results) {
 }
 // The runtime itself must be close to free when it does not cap anything.
 check(byName.uncapped.perAccount.every((a) => a.fps >= 55), "uncapped: frame rate dropped below 55 fps");
-check(
-  byName.uncapped.processCpuPercent <= base.processCpuPercent * 1.1,
-  `uncapped: runtime overhead ${(-saving(byName.uncapped, "processCpuPercent") * 100).toFixed(0)}% > 10%`,
-);
+const overhead = median(overheadCpu.uncapped) / median(overheadCpu.baseline) - 1;
+console.log(`runtime overhead, median of ${OVERHEAD_ROUNDS} alternating runs: ${(overhead * 100).toFixed(1)}%`);
+check(overhead <= 0.1, `uncapped: runtime overhead ${(overhead * 100).toFixed(0)}% > 10%`);
 // Every tab must render at the rate its policy asks for.
 for (const name of ["fourPanes", "onePane"]) {
   const r = byName[name];
