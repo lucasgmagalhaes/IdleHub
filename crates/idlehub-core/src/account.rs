@@ -88,9 +88,36 @@ pub enum AccountError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredAccounts")]
 pub struct AccountStore {
     max_accounts: usize,
     accounts: Vec<Account>,
+}
+
+/// The store as found on disk, before the rules `add` enforces are checked.
+#[derive(Deserialize)]
+struct StoredAccounts {
+    max_accounts: usize,
+    accounts: Vec<Account>,
+}
+
+impl From<StoredAccounts> for AccountStore {
+    /// Files edited by hand or written by older versions may break the store's
+    /// rules. Accounts that do are dropped rather than failing the whole file.
+    fn from(stored: StoredAccounts) -> Self {
+        let max_accounts = match stored.max_accounts {
+            0 => DEFAULT_MAX_ACCOUNTS,
+            n => n,
+        };
+        let mut store = Self::new(max_accounts);
+        for account in stored.accounts {
+            let fits = store.accounts.len() < max_accounts;
+            if fits && store.get(account.id).is_none() && is_web_url(&account.url) {
+                store.accounts.push(account);
+            }
+        }
+        store
+    }
 }
 
 impl Default for AccountStore {
@@ -384,6 +411,63 @@ mod tests {
         let order: Vec<_> = store.accounts().iter().map(|x| x.id).collect();
         assert_eq!(order, vec![c, b, a]);
         assert_eq!(store.swap(a, AccountId::new()), Err(AccountError::NotFound));
+    }
+
+    fn stored(max: usize, accounts: &[(AccountId, &str, &str)]) -> AccountStore {
+        let accounts: Vec<_> = accounts
+            .iter()
+            .map(|(id, label, url)| serde_json::json!({"id": id, "label": label, "url": url}))
+            .collect();
+        AccountStore::from_json(
+            &serde_json::json!({"max_accounts": max, "accounts": accounts}).to_string(),
+        )
+        .unwrap()
+    }
+
+    fn labels(store: &AccountStore) -> Vec<&str> {
+        store.accounts().iter().map(|a| a.label.as_str()).collect()
+    }
+
+    #[test]
+    fn loading_drops_accounts_that_repeat_an_id() {
+        // Two tabs with one id would fight over one webview and one profile.
+        let id = AccountId::new();
+        let store = stored(
+            4,
+            &[(id, "A", DEFAULT_GAME_URL), (id, "B", DEFAULT_GAME_URL)],
+        );
+        assert_eq!(labels(&store), ["A"]);
+    }
+
+    #[test]
+    fn loading_keeps_at_most_the_account_limit() {
+        let store = stored(
+            2,
+            &[
+                (AccountId::new(), "A", DEFAULT_GAME_URL),
+                (AccountId::new(), "B", DEFAULT_GAME_URL),
+                (AccountId::new(), "C", DEFAULT_GAME_URL),
+            ],
+        );
+        assert_eq!(labels(&store), ["A", "B"]);
+    }
+
+    #[test]
+    fn loading_drops_accounts_whose_address_cannot_be_opened() {
+        let store = stored(
+            4,
+            &[
+                (AccountId::new(), "A", "https://"),
+                (AccountId::new(), "B", DEFAULT_GAME_URL),
+            ],
+        );
+        assert_eq!(labels(&store), ["B"]);
+    }
+
+    #[test]
+    fn loading_a_zero_limit_falls_back_to_the_default() {
+        let store = stored(0, &[(AccountId::new(), "A", DEFAULT_GAME_URL)]);
+        assert_eq!(labels(&store), ["A"]);
     }
 
     #[test]
