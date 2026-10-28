@@ -1,4 +1,4 @@
-// End-to-end check on the real desktop app (Linux, WebKitGTK).
+// End-to-end check on the real desktop app (Linux/WebKitGTK and Windows/WebView2).
 //
 // Usage: pnpm bench:app   (builds the app with the UI embedded first)
 // Starts IdleHub with 4 accounts of the synthetic game, once per layout, and
@@ -6,10 +6,10 @@
 // proves the policy travels from Rust to the page — and that the hidden-tab
 // layout costs less CPU than the 4-pane one. The game pages report their own
 // frame counts to a local server.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,7 +17,9 @@ import { startFixtureServer } from "./lib/fixture-server.mjs";
 import { treeProcesses, treeUsage } from "./lib/proc.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const binary = process.env.IDLEHUB_BIN ?? join(root, "target/debug/idlehub");
+const windows = process.platform === "win32";
+const binary = process.env.IDLEHUB_BIN ?? join(root, "target/debug", windows ? "idlehub.exe" : "idlehub");
+const IDENTIFIER = "com.lucasgmagalhaes.idlehub";
 const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 10000);
 const ACCOUNTS = 4;
 // Mirrors `PolicySettings::default()` in crates/idlehub-core/src/policy.rs.
@@ -26,15 +28,34 @@ const POLICY = { singlePane: 60, multiPane: 30, hidden: 1 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function withDisplay() {
-  if (process.env.DISPLAY) return { display: process.env.DISPLAY, stop() {} };
+  if (windows || process.env.DISPLAY) return { display: process.env.DISPLAY, stop() {} };
   const display = ":97";
   const xvfb = spawn("Xvfb", [display, "-screen", "0", "1440x900x24"], { stdio: "ignore" });
   await sleep(1000);
   return { display, stop: () => xvfb.kill() };
 }
 
-function writeWorkspace(dataHome, port, panes, count) {
-  const dir = join(dataHome, "com.lucasgmagalhaes.idlehub");
+/**
+ * Where the app keeps its data. Linux honours XDG_DATA_HOME, so each run gets a
+ * temporary folder; Windows always uses the roaming AppData folder.
+ */
+function appDataDir() {
+  if (windows) return { dataHome: null, dir: join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), IDENTIFIER) };
+  const dataHome = mkdtempSync(join(tmpdir(), "idlehub-bench-"));
+  return { dataHome, dir: join(dataHome, IDENTIFIER) };
+}
+
+function stopTree(app) {
+  if (windows) {
+    try {
+      execFileSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {}
+  } else {
+    app.kill("SIGTERM");
+  }
+}
+
+function writeWorkspace(dir, port, panes, count) {
   mkdirSync(dir, { recursive: true });
   const accounts = Array.from({ length: count }, (_, i) => ({
     id: randomUUID(),
@@ -70,22 +91,24 @@ function breakdown(before, after, seconds) {
   const web = [...after.values()].filter((p) => p.name.startsWith("WebKitWebProces")).sort((a, b) => a.pid - b.pid);
   for (const p of after.values()) {
     const cpu = ((p.cpuSeconds - (before.get(p.pid)?.cpuSeconds ?? p.cpuSeconds)) / seconds) * 100;
-    const rss = (p.rssPages * 4096) / 1024 / 1024;
-    if (p.name.startsWith("WebKitNetwork")) add("network processes", cpu, rss);
+    const rss = (p.privateBytes ?? p.rssBytes) / 1024 / 1024;
+    if (p.name.startsWith("msedgewebview2")) add(`webview2 ${/--type=([\w-]+)/.exec(p.command)?.[1] ?? "browser"}`, cpu, rss);
+    else if (p.name.startsWith("WebKitNetwork")) add("network processes", cpu, rss);
     else if (p.name.startsWith("WebKitWebProces")) add(p === web[0] ? "ui web process" : `tab web process ${web.indexOf(p)}`, cpu, rss);
-    else if (p.name === "idlehub") add("app process", cpu, rss);
+    else if (p.name === "idlehub" || p.name === "idlehub.exe") add("app process", cpu, rss);
     else add(`other (${p.name})`, cpu, rss);
   }
   return roles;
 }
 
 async function runScenario(server, display, scenario) {
-  const dataHome = mkdtempSync(join(tmpdir(), "idlehub-bench-"));
-  writeWorkspace(dataHome, server.port, scenario.panes, scenario.tabs);
-  const app = spawn(binary, [], {
-    env: { ...process.env, DISPLAY: display, XDG_DATA_HOME: dataHome, WEBKIT_DISABLE_COMPOSITING_MODE: "1" },
-    stdio: "ignore",
-  });
+  const { dataHome, dir } = appDataDir();
+  rmSync(dir, { recursive: true, force: true });
+  writeWorkspace(dir, server.port, scenario.panes, scenario.tabs);
+  const env = { ...process.env, ...scenario.env, WEBKIT_DISABLE_COMPOSITING_MODE: "1" };
+  if (display) env.DISPLAY = display;
+  if (dataHome) env.XDG_DATA_HOME = dataHome;
+  const app = spawn(binary, [], { env, stdio: "ignore" });
   try {
     await waitFor(() => server.snapshot().size === scenario.tabs, 60000, "all tabs to report");
     await sleep(4000); // warm-up
@@ -108,18 +131,31 @@ async function runScenario(server, display, scenario) {
       tabs,
       cpuPercent: ((usageAfter.cpuSeconds - usageBefore.cpuSeconds) / (MEASURE_MS / 1000)) * 100,
       rssMb: usageAfter.rssBytes / 1024 / 1024,
+      privateMb: usageAfter.privateBytes === null ? null : usageAfter.privateBytes / 1024 / 1024,
       processes: usageAfter.processes,
       roles: breakdown(processesBefore, processesAfter, MEASURE_MS / 1000),
     };
   } finally {
-    app.kill("SIGTERM");
-    await sleep(1000);
+    stopTree(app);
+    await sleep(2000);
     if (app.exitCode === null) app.kill("SIGKILL");
-    rmSync(dataHome, { recursive: true, force: true });
+    rmSync(dataHome ?? dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }
 
 const scenarios = [
+  ...(windows
+    ? [
+        {
+          name: "fourPanesSeparate",
+          label: "4 panes, browser per account",
+          panes: 4,
+          tabs: ACCOUNTS,
+          env: { IDLEHUB_WEBVIEW2_SEPARATE: "1" },
+          expected: Array(ACCOUNTS).fill(POLICY.multiPane),
+        },
+      ]
+    : []),
   { name: "empty", label: "no tabs", panes: 4, tabs: 0, expected: [] },
   { name: "fourPanes", label: "4 panes", panes: 4, tabs: ACCOUNTS, expected: Array(ACCOUNTS).fill(POLICY.multiPane) },
   {
@@ -148,7 +184,8 @@ try {
 console.log(`\nIdleHub desktop app, ${ACCOUNTS} accounts, ${MEASURE_MS} ms window\n`);
 for (const r of results) {
   console.log(
-    `${r.label.padEnd(20)} cpu ${r.cpuPercent.toFixed(0).padStart(4)}%  rss ${r.rssMb.toFixed(0).padStart(5)} MB  ` +
+    `${r.label.padEnd(30)} cpu ${r.cpuPercent.toFixed(0).padStart(4)}%  rss ${r.rssMb.toFixed(0).padStart(5)} MB  ` +
+      (r.privateMb === null ? "" : `private ${r.privateMb.toFixed(0).padStart(5)} MB  `) +
       `${String(r.processes).padStart(2)} processes  fps ${r.tabs.map((t) => t.fps.toFixed(1)).join("/")}` +
       ` (expected ${r.expected.join("/")})  ticks/s ${r.tabs.map((t) => t.ticksPerSec.toFixed(1)).join("/")}`,
   );
@@ -172,8 +209,13 @@ for (const r of results) {
   });
 }
 const named = Object.fromEntries(results.map((r) => [r.name, r]));
-const { fourPanes: four, onePane: one } = named;
+const { fourPanes: four, onePane: one, fourPanesSeparate: separate } = named;
 if (four && one) check(one.cpuPercent < four.cpuPercent, "hiding tabs did not reduce CPU");
+// Windows: sharing one WebView2 browser between accounts must use less memory.
+if (four && separate) {
+  check(four.processes < separate.processes, "shared browser did not reduce the number of processes");
+  check(four.privateMb < separate.privateMb, "shared browser did not reduce private memory");
+}
 
 if (failures.length) {
   console.error(`\n✗ ${failures.join("\n✗ ")}`);
@@ -181,3 +223,10 @@ if (failures.length) {
 }
 console.log("\n✓ all checks passed");
 if (four && one) console.log(`  1 pane + 3 hidden uses ${(100 - (one.cpuPercent / four.cpuPercent) * 100).toFixed(0)}% less CPU than 4 panes`);
+if (four && separate) {
+  console.log(
+    `  shared browser: ${separate.processes} → ${four.processes} processes, ` +
+      `private memory ${separate.privateMb.toFixed(0)} → ${four.privateMb.toFixed(0)} MB ` +
+      `(${(100 - (four.privateMb / separate.privateMb) * 100).toFixed(0)}% less)`,
+  );
+}
