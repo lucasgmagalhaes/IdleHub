@@ -105,7 +105,11 @@ fn check_rules(ws: &Workspace) {
 
     let panes = ws.panes().get();
     let settings = ws.policy();
-    for fps in [settings.single_pane_fps, settings.multi_pane_fps, settings.hidden_fps] {
+    for fps in [
+        settings.single_pane_fps,
+        settings.multi_pane_fps,
+        settings.hidden_fps,
+    ] {
         assert!((MIN_FPS..=MAX_FPS).contains(&fps));
     }
     for (i, tab) in ws.tabs().iter().enumerate() {
@@ -113,7 +117,11 @@ fn check_rules(ws: &Workspace) {
         assert_eq!(tab.pane, visible.then_some(i), "tab {i} in the wrong pane");
         assert!((MIN_FPS..=MAX_FPS).contains(&tab.policy.max_fps));
         if visible {
-            let expected = if panes == 1 { settings.single_pane_fps } else { settings.multi_pane_fps };
+            let expected = if panes == 1 {
+                settings.single_pane_fps
+            } else {
+                settings.multi_pane_fps
+            };
             assert_eq!(tab.policy.max_fps, expected);
             assert_eq!(tab.policy.muted, tab.account.muted);
         } else {

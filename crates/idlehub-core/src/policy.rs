@@ -16,7 +16,7 @@ pub struct RenderPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct PolicySettings {
     /// Frame cap when a single pane fills the window.
     pub single_pane_fps: u32,

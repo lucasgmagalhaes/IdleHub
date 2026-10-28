@@ -26,11 +26,22 @@ pub struct TabState {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Workspace {
     store: AccountStore,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_default")]
     panes: PaneCount,
     /// Frame caps chosen by the user; older files without it get the defaults.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_default")]
     policy: PolicySettings,
+}
+
+/// Settings that cannot be read fall back to their default instead of failing
+/// the whole file, which would set every tab aside with it.
+fn or_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(T::deserialize(value).unwrap_or_default())
 }
 
 impl Workspace {
@@ -123,7 +134,10 @@ impl Workspace {
     }
 
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let mut workspace: Self = serde_json::from_str(json)?;
+        // Caps edited by hand are held to what the page runtime supports.
+        workspace.policy = workspace.policy.clamped();
+        Ok(workspace)
     }
 }
 
@@ -354,6 +368,48 @@ mod tests {
         assert_eq!(
             Workspace::from_json(json).unwrap().policy(),
             PolicySettings::default()
+        );
+    }
+
+    #[test]
+    fn a_bad_layout_in_the_file_keeps_the_tabs() {
+        // One unreadable field must not set the whole file aside with every tab in it.
+        let (ws, _) = workspace_with(&["A", "B"]);
+        let mut json: serde_json::Value = serde_json::from_str(&ws.to_json()).unwrap();
+        json["panes"] = serde_json::json!(0);
+        let restored = Workspace::from_json(&json.to_string()).unwrap();
+        assert_eq!(restored.store(), ws.store());
+        assert_eq!(restored.panes(), PaneCount::default());
+    }
+
+    #[test]
+    fn missing_frame_caps_take_their_defaults() {
+        let json =
+            r#"{"store":{"max_accounts":4,"accounts":[]},"panes":2,"policy":{"hiddenFps":5}}"#;
+        let policy = Workspace::from_json(json).unwrap().policy();
+        assert_eq!(policy.hidden_fps, 5);
+        assert_eq!(
+            policy.single_pane_fps,
+            PolicySettings::default().single_pane_fps
+        );
+    }
+
+    #[test]
+    fn unreadable_frame_caps_fall_back_to_the_defaults() {
+        let json = r#"{"store":{"max_accounts":4,"accounts":[]},"panes":2,"policy":"fast"}"#;
+        assert_eq!(
+            Workspace::from_json(json).unwrap().policy(),
+            PolicySettings::default()
+        );
+    }
+
+    #[test]
+    fn frame_caps_in_the_file_are_clamped() {
+        let json = r#"{"store":{"max_accounts":4,"accounts":[]},"policy":{"hiddenFps":0,"singlePaneFps":999}}"#;
+        let policy = Workspace::from_json(json).unwrap().policy();
+        assert_eq!(
+            (policy.hidden_fps, policy.single_pane_fps),
+            (MIN_FPS, MAX_FPS)
         );
     }
 
