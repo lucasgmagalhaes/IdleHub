@@ -126,6 +126,49 @@ describe("installAudioMute", () => {
     expect(music.muted).toBe(false);
   });
 
+  it("keeps media silent when the game unmutes it while the tab is muted", async () => {
+    uninstall = installAudioMute(asWindow(win), true).uninstall;
+    const music = document.createElement("audio");
+    document.body.append(music);
+    await music.play();
+
+    music.muted = false; // the game's own sound toggle
+
+    expect(music.muted).toBe(true);
+  });
+
+  it("lets the game's sound choice apply once the tab is unmuted", async () => {
+    const control = installAudioMute(asWindow(win), true);
+    uninstall = control.uninstall;
+    const music = document.createElement("audio");
+    const effects = document.createElement("audio");
+    document.body.append(music, effects);
+    await music.play();
+    await effects.play();
+
+    music.muted = false; // game turns music on while the tab is muted
+    effects.muted = true; // and turns effects off
+
+    control.setMuted(false);
+    expect(music.muted).toBe(false);
+    expect(effects.muted).toBe(true);
+  });
+
+  it("lets the game mute and unmute freely while the tab is audible", () => {
+    uninstall = installAudioMute(asWindow(win), false).uninstall;
+    const music = document.createElement("audio");
+    music.muted = true;
+    expect(music.muted).toBe(true);
+    music.muted = false;
+    expect(music.muted).toBe(false);
+  });
+
+  it("restores the media muted property when uninstalled", () => {
+    const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted");
+    installAudioMute(asWindow(win), true).uninstall();
+    expect(Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted")).toEqual(native);
+  });
+
   it("reports the current state", () => {
     const control = installAudioMute(asWindow(win), false);
     uninstall = control.uninstall;

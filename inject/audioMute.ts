@@ -14,20 +14,27 @@ type AudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof Au
  */
 export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): AudioMute {
   let muted = initiallyMuted;
+  /** Media to unmute when the tab gets its sound back; `mutedByUs` says which still should. */
   const mutedMedia = new Set<WeakRef<HTMLMediaElement>>();
+  const mutedByUs = new WeakSet<HTMLMediaElement>();
   const contexts = new Set<WeakRef<AudioContext>>();
   const suspendedByUs = new WeakSet<AudioContext>();
 
   const mediaPrototype = win.HTMLMediaElement.prototype;
   const nativePlay = mediaPrototype.play;
+  const nativeMuted = Object.getOwnPropertyDescriptor(mediaPrototype, "muted")!;
+  const isMuted = (el: HTMLMediaElement) => nativeMuted.get!.call(el) as boolean;
+  const setMuted = (el: HTMLMediaElement, value: boolean) => nativeMuted.set!.call(el, value);
   const nativeContexts = {
     AudioContext: win.AudioContext,
     webkitAudioContext: win.webkitAudioContext,
   };
 
+  /** Silences `el` and remembers to give it its sound back. */
   function muteMedia(el: HTMLMediaElement) {
-    if (el.muted) return;
-    el.muted = true;
+    if (isMuted(el) || mutedByUs.has(el)) return;
+    setMuted(el, true);
+    mutedByUs.add(el);
     mutedMedia.add(new WeakRef(el));
   }
 
@@ -53,7 +60,10 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
     }
     for (const ref of mutedMedia) {
       const el = ref.deref();
-      if (el) el.muted = false;
+      if (el && mutedByUs.has(el)) {
+        mutedByUs.delete(el);
+        setMuted(el, false);
+      }
     }
     mutedMedia.clear();
     for (const ref of contexts) {
@@ -66,6 +76,25 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
       }
     }
   }
+
+  // While the tab is muted, the game's own sound toggle is remembered, not applied:
+  // it would otherwise make a hidden tab audible. Unmuting the tab applies it.
+  Object.defineProperty(mediaPrototype, "muted", {
+    ...nativeMuted,
+    set(this: HTMLMediaElement, value: boolean) {
+      if (!muted) return setMuted(this, value);
+      if (value) {
+        mutedByUs.delete(this);
+        setMuted(this, true);
+      } else {
+        setMuted(this, true);
+        if (!mutedByUs.has(this)) {
+          mutedByUs.add(this);
+          mutedMedia.add(new WeakRef(this));
+        }
+      }
+    },
+  });
 
   mediaPrototype.play = function (this: HTMLMediaElement) {
     if (muted) muteMedia(this);
@@ -114,6 +143,7 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
     },
     uninstall() {
       mediaPrototype.play = nativePlay;
+      Object.defineProperty(mediaPrototype, "muted", nativeMuted);
       win.removeEventListener("play", onPlay, true);
       win.AudioContext = nativeContexts.AudioContext;
       if (nativeContexts.webkitAudioContext) win.webkitAudioContext = nativeContexts.webkitAudioContext;
