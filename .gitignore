@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-inject/
+target/
+bench/results/
+*.log
+.DS_Store
