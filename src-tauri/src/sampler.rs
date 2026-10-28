@@ -1,12 +1,15 @@
 //! Samples CPU and memory of the app's process tree.
 
 use idlehub_core::metrics::ProcessSample;
+#[cfg(not(target_os = "ios"))]
 use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+#[cfg(not(target_os = "ios"))]
 pub struct Sampler {
     system: System,
 }
 
+#[cfg(not(target_os = "ios"))]
 impl Sampler {
     pub fn new() -> Self {
         let mut sampler = Self {
@@ -55,5 +58,28 @@ impl Sampler {
                 memory_bytes: p.memory(),
             })
             .collect()
+    }
+}
+
+/// iOS does not let apps inspect processes; usage is reported as unknown (zero).
+#[cfg(target_os = "ios")]
+pub struct Sampler;
+
+#[cfg(target_os = "ios")]
+impl Sampler {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn total_memory(&mut self) -> u64 {
+        0
+    }
+
+    pub fn cpu_count(&self) -> usize {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    }
+
+    pub fn snapshot(&mut self) -> Vec<ProcessSample> {
+        Vec::new()
     }
 }

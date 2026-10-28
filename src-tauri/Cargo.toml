@@ -17,6 +17,9 @@ idlehub-core = { path = "../crates/idlehub-core" }
 tauri = { version = "2", features = ["unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# iOS does not let apps inspect processes, and sysinfo does not build there.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
 sysinfo = "0.37"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
