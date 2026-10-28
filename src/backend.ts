@@ -1,9 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
-export interface Account {
+export interface RenderPolicy {
+  maxFps: number;
+  muted: boolean;
+}
+
+export interface Tab {
   id: string;
   label: string;
   url: string;
+  muted: boolean;
+  pinned: boolean;
+  /** Pane showing the tab, or null when it runs hidden. */
+  pane: number | null;
+  policy: RenderPolicy;
+}
+
+export interface TabsView {
+  tabs: Tab[];
+  panes: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface Usage {
@@ -15,24 +38,49 @@ export interface Usage {
 export interface UsageReport {
   total: Usage;
   accounts: Record<string, Usage>;
+  systemMemoryBytes: number;
+  cpuCount: number;
 }
 
 /** Everything the UI needs from the host app; faked in tests. */
 export interface Backend {
-  listAccounts(): Promise<Account[]>;
-  addAccount(label: string, url?: string): Promise<Account>;
-  removeAccount(id: string): Promise<void>;
-  /** `null` shows the grid, an id focuses that account. */
-  focusAccount(id: string | null): Promise<void>;
-  reloadAccount(id: string): Promise<void>;
+  getTabs(): Promise<TabsView>;
+  addTab(label: string, url?: string): Promise<TabsView>;
+  closeTab(id: string): Promise<TabsView>;
+  setPanes(count: number): Promise<TabsView>;
+  showInPane(pane: number, id: string): Promise<TabsView>;
+  setMuted(id: string, muted: boolean): Promise<TabsView>;
+  setPinned(id: string, pinned: boolean): Promise<TabsView>;
+  reloadTab(id: string): Promise<void>;
+  /** Content area of each pane, in pane order, in window coordinates. */
+  setPaneRects(rects: Rect[]): Promise<void>;
   usage(): Promise<UsageReport>;
 }
 
+export interface WindowControls {
+  /** macOS keeps its native traffic lights, so the UI hides its own buttons. */
+  native: boolean;
+  minimize(): Promise<void>;
+  toggleMaximize(): Promise<void>;
+  close(): Promise<void>;
+}
+
 export const tauriBackend: Backend = {
-  listAccounts: () => invoke("list_accounts"),
-  addAccount: (label, url) => invoke("add_account", { label, url: url || null }),
-  removeAccount: (id) => invoke("remove_account", { id }),
-  focusAccount: (id) => invoke("focus_account", { id }),
-  reloadAccount: (id) => invoke("reload_account", { id }),
+  getTabs: () => invoke("get_tabs"),
+  addTab: (label, url) => invoke("add_tab", { label, url: url || null }),
+  closeTab: (id) => invoke("close_tab", { id }),
+  setPanes: (count) => invoke("set_panes", { count }),
+  showInPane: (pane, id) => invoke("show_in_pane", { pane, id }),
+  setMuted: (id, muted) => invoke("set_muted", { id, muted }),
+  setPinned: (id, pinned) => invoke("set_pinned", { id, pinned }),
+  reloadTab: (id) => invoke("reload_tab", { id }),
+  setPaneRects: (rects) => invoke("set_pane_rects", { rects }),
   usage: () => invoke("usage_report"),
+};
+
+export const tauriWindowControls: WindowControls = {
+  native: navigator.userAgent.includes("Mac"),
+  minimize: () => getCurrentWindow().minimize(),
+  toggleMaximize: () => getCurrentWindow().toggleMaximize(),
+  close: () => getCurrentWindow().close(),
 };

@@ -1,110 +1,224 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
-import { createFakeBackend } from "./test/fakeBackend";
+import { createFakeBackend, createFakeWindowControls } from "./test/fakeBackend";
 
-const main = { id: "a", label: "Main", url: "https://huntera.com.br" };
-const alt = { id: "b", label: "Alt", url: "https://huntera.com.br" };
+const GB = 1024 ** 3;
+const cookie = { id: "a", label: "Cookie Clicker", url: "https://orteil.dashnet.org/cookieclicker/" };
+const melvor = { id: "b", label: "Melvor Idle", url: "https://melvoridle.com", muted: false };
+const farmer = { id: "c", label: "Farmer Against Potatoes", url: "https://farmeragainstpotatoes.com" };
+const slayer = { id: "d", label: "Idle Slayer", url: "https://idleslayer.com" };
+
+function setup(tabs = [cookie, melvor, farmer, slayer], panes = 4, native = false) {
+  const fake = createFakeBackend(tabs, panes);
+  const controls = createFakeWindowControls(native);
+  const user = userEvent.setup();
+  render(<App backend={fake.backend} windowControls={controls} />);
+  return { ...fake, controls, user };
+}
+
+const panes = () => screen.queryAllByRole("region", { name: /^Painel/ });
 
 describe("App", () => {
-  it("lists the accounts from the backend", async () => {
-    const { backend } = createFakeBackend([main, alt]);
-    render(<App backend={backend} />);
-    expect(await screen.findByRole("button", { name: /^Main/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Alt/ })).toBeInTheDocument();
+  describe("top bar", () => {
+    it("shows the brand and the layout picker with the current layout selected", async () => {
+      setup();
+      expect(screen.getByText("IdleHub")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "4 painéis" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "1 painel" })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("switches the number of panes", async () => {
+      const { backend, user } = setup();
+      await screen.findAllByRole("region", { name: /^Painel/ });
+
+      await user.click(screen.getByRole("button", { name: "3 painéis" }));
+
+      expect(backend.setPanes).toHaveBeenCalledWith(3);
+      expect(panes()).toHaveLength(3);
+      expect(screen.getByRole("button", { name: "3 painéis" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("shows cpu and memory meters for the whole machine", async () => {
+      const fake = createFakeBackend([cookie]);
+      fake.usage.total = { cpuPercent: 48, memoryBytes: 1.4 * GB, processes: 9 };
+      render(<App backend={fake.backend} windowControls={createFakeWindowControls()} />);
+
+      const cpu = await screen.findByRole("meter", { name: "CPU" });
+      expect(cpu).toHaveAttribute("aria-valuenow", "12");
+      expect(within(cpu.closest("div")!).getByText("12%")).toBeInTheDocument();
+      const memory = screen.getByRole("meter", { name: "Memória" });
+      expect(within(memory.closest("div")!).getByText("1.4 GB / 8 GB")).toBeInTheDocument();
+    });
+
+    it("offers window buttons except where the system draws them", async () => {
+      const { controls, user } = setup();
+      await user.click(screen.getByRole("button", { name: "Fechar" }));
+      expect(controls.close).toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Minimizar" }));
+      expect(controls.minimize).toHaveBeenCalled();
+    });
+
+    it("hides window buttons on macOS", () => {
+      setup(undefined, undefined, true);
+      expect(screen.queryByRole("button", { name: "Fechar" })).not.toBeInTheDocument();
+    });
   });
 
-  it("focuses an account and returns to the grid", async () => {
-    const user = userEvent.setup();
-    const { backend } = createFakeBackend([main, alt]);
-    render(<App backend={backend} />);
+  describe("new tab", () => {
+    it("opens a tab with a name and url", async () => {
+      const { backend, user } = setup([cookie]);
+      await screen.findAllByRole("region", { name: /^Painel/ });
 
-    await user.click(await screen.findByRole("button", { name: /^Alt/ }));
-    expect(backend.focusAccount).toHaveBeenLastCalledWith("b");
-    expect(screen.getByRole("button", { name: /^Alt/ })).toHaveAttribute("aria-pressed", "true");
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: "Nova aba" }));
+      await user.type(screen.getByLabelText("Nome da aba"), "Huntera Main");
+      await user.type(screen.getByLabelText("Endereço"), "https://huntera.com.br{Enter}");
 
-    await user.click(screen.getByRole("button", { name: "Grid" }));
-    expect(backend.focusAccount).toHaveBeenLastCalledWith(null);
-    expect(screen.getByRole("button", { name: /^Alt/ })).toHaveAttribute("aria-pressed", "false");
+      expect(backend.addTab).toHaveBeenCalledWith("Huntera Main", "https://huntera.com.br");
+      expect(await screen.findByRole("region", { name: "Painel 2: Huntera Main" })).toBeInTheDocument();
+      expect(screen.queryByLabelText("Nome da aba")).not.toBeInTheDocument();
+    });
+
+    it("defaults the address to the game when left empty", async () => {
+      const { backend, user } = setup([]);
+      await user.click(within(await screen.findByRole("banner")).getByRole("button", { name: "Nova aba" }));
+      await user.type(screen.getByLabelText("Nome da aba"), "Main{Enter}");
+      expect(backend.addTab).toHaveBeenCalledWith("Main", undefined);
+    });
+
+    it("can be cancelled with Escape", async () => {
+      const { user } = setup([]);
+      await user.click(within(await screen.findByRole("banner")).getByRole("button", { name: "Nova aba" }));
+      await user.keyboard("{Escape}");
+      expect(screen.queryByLabelText("Nome da aba")).not.toBeInTheDocument();
+    });
+
+    it("shows backend errors", async () => {
+      const { user } = setup([cookie, melvor, farmer, slayer]);
+      await screen.findAllByRole("region", { name: /^Painel/ });
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: "Nova aba" }));
+      await user.type(screen.getByLabelText("Nome da aba"), "Extra{Enter}");
+      expect(await screen.findByRole("alert")).toHaveTextContent("account limit of 4 reached");
+    });
+
+    it("is offered inside empty panes", async () => {
+      const { user } = setup([cookie], 2);
+      const empty = await screen.findByRole("region", { name: "Painel 2: vazio" });
+      await user.click(within(empty).getByRole("button", { name: "Nova aba" }));
+      expect(screen.getByLabelText("Nome da aba")).toHaveFocus();
+    });
   });
 
-  it("returns to the grid with Escape", async () => {
-    const user = userEvent.setup();
-    const { backend } = createFakeBackend([main]);
-    render(<App backend={backend} />);
-    await user.click(await screen.findByRole("button", { name: /^Main/ }));
-    await user.keyboard("{Escape}");
-    expect(backend.focusAccount).toHaveBeenLastCalledWith(null);
+  describe("panes", () => {
+    it("shows each visible tab with its name and address", async () => {
+      setup();
+      const first = await screen.findByRole("region", { name: "Painel 1: Cookie Clicker" });
+      expect(within(first).getByText("orteil.dashnet.org/cookieclicker/")).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Painel 4: Idle Slayer" })).toBeInTheDocument();
+    });
+
+    it("lets a pane switch to a hidden tab", async () => {
+      const { backend, user } = setup(undefined, 1);
+      const pane = await screen.findByRole("region", { name: "Painel 1: Cookie Clicker" });
+
+      await user.selectOptions(within(pane).getByRole("combobox", { name: "Aba do painel 1" }), "Idle Slayer");
+
+      expect(backend.showInPane).toHaveBeenCalledWith(0, "d");
+      expect(await screen.findByRole("region", { name: "Painel 1: Idle Slayer" })).toBeInTheDocument();
+    });
+
+    it("toggles sound per tab", async () => {
+      const { backend, user } = setup();
+      const pane = await screen.findByRole("region", { name: "Painel 2: Melvor Idle" });
+      const sound = within(pane).getByRole("button", { name: "Som" });
+      expect(sound).toHaveAttribute("aria-pressed", "true");
+
+      await user.click(sound);
+
+      expect(backend.setMuted).toHaveBeenCalledWith("b", true);
+      expect(within(pane).getByRole("button", { name: "Som" })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("pins a tab, which protects it from closing", async () => {
+      const { backend, user } = setup();
+      const pane = await screen.findByRole("region", { name: "Painel 1: Cookie Clicker" });
+
+      await user.click(within(pane).getByRole("button", { name: "Fixar" }));
+
+      expect(backend.setPinned).toHaveBeenCalledWith("a", true);
+      expect(within(pane).getByRole("button", { name: "Fixar" })).toHaveAttribute("aria-pressed", "true");
+      expect(within(pane).getByRole("button", { name: "Fechar aba" })).toBeDisabled();
+    });
+
+    it("reloads a tab", async () => {
+      const { backend, user } = setup();
+      const pane = await screen.findByRole("region", { name: "Painel 3: Farmer Against Potatoes" });
+      await user.click(within(pane).getByRole("button", { name: "Recarregar" }));
+      expect(backend.reloadTab).toHaveBeenCalledWith("c");
+    });
+
+    it("closes a tab after confirmation", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const { backend, user } = setup();
+      const pane = await screen.findByRole("region", { name: "Painel 4: Idle Slayer" });
+
+      await user.click(within(pane).getByRole("button", { name: "Fechar aba" }));
+
+      expect(backend.closeTab).toHaveBeenCalledWith("d");
+      expect(await screen.findByRole("region", { name: "Painel 4: vazio" })).toBeInTheDocument();
+    });
+
+    it("keeps the tab when closing is not confirmed", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const { backend, user } = setup();
+      const pane = await screen.findByRole("region", { name: "Painel 4: Idle Slayer" });
+      await user.click(within(pane).getByRole("button", { name: "Fechar aba" }));
+      expect(backend.closeTab).not.toHaveBeenCalled();
+    });
+
+    it("reports the content area of every pane to the host", async () => {
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        const pane = Number(this.dataset.paneContent ?? -1);
+        return { x: pane * 100, y: 60, width: 100, height: 200 } as DOMRect;
+      });
+      const { backend } = setup(undefined, 2);
+      await screen.findAllByRole("region", { name: /^Painel/ });
+
+      act(() => (globalThis as unknown as { triggerResize(): void }).triggerResize());
+
+      expect(backend.setPaneRects).toHaveBeenLastCalledWith([
+        { x: 0, y: 60, width: 100, height: 200 },
+        { x: 100, y: 60, width: 100, height: 200 },
+      ]);
+      vi.restoreAllMocks();
+    });
   });
 
-  it("adds an account", async () => {
-    const user = userEvent.setup();
-    const { backend } = createFakeBackend([main]);
-    render(<App backend={backend} />);
-    await screen.findByRole("button", { name: /^Main/ });
+  describe("status bar", () => {
+    it("counts running tabs, including hidden ones", async () => {
+      setup(undefined, 1);
+      expect(await screen.findByText("4 abas ativas")).toBeInTheDocument();
+    });
 
-    await user.type(screen.getByLabelText("Account name"), "Farm{Enter}");
+    it("uses the singular for one tab", async () => {
+      setup([cookie]);
+      expect(await screen.findByText("1 aba ativa")).toBeInTheDocument();
+    });
 
-    expect(backend.addAccount).toHaveBeenCalledWith("Farm", undefined);
-    expect(await screen.findByRole("button", { name: /^Farm/ })).toBeInTheDocument();
-    expect(screen.getByLabelText("Account name")).toHaveValue("");
-  });
+    it("shows memory use against the machine total", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const fake = createFakeBackend([cookie]);
+      fake.usage.total = { cpuPercent: 4, memoryBytes: 1.4 * GB, processes: 5 };
+      render(<App backend={fake.backend} windowControls={createFakeWindowControls()} />);
 
-  it("shows backend errors when adding fails", async () => {
-    const user = userEvent.setup();
-    const { backend } = createFakeBackend([main]);
-    backend.addAccount.mockRejectedValueOnce("label \"main\" is already used");
-    render(<App backend={backend} />);
-    await screen.findByRole("button", { name: /^Main/ });
+      const status = await screen.findByRole("contentinfo");
+      expect(await within(status).findByText("1.4 GB / 8 GB")).toBeInTheDocument();
+      expect(within(status).getByText("18%")).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Account name"), "main{Enter}");
-
-    expect(await screen.findByRole("alert")).toHaveTextContent('label "main" is already used');
-  });
-
-  it("hides the add form when the account limit is reached", async () => {
-    const accounts = ["A", "B", "C", "D"].map((label) => ({ id: label, label, url: "" }));
-    const { backend } = createFakeBackend(accounts);
-    render(<App backend={backend} />);
-    await screen.findByRole("button", { name: /^A/ });
-    expect(screen.queryByLabelText("Account name")).not.toBeInTheDocument();
-  });
-
-  it("removes an account after confirmation", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    const { backend } = createFakeBackend([main, alt]);
-    render(<App backend={backend} />);
-    await screen.findByRole("button", { name: /^Main/ });
-
-    await user.click(screen.getByRole("button", { name: "Remove Main" }));
-
-    expect(backend.removeAccount).toHaveBeenCalledWith("a");
-    expect(screen.queryByRole("button", { name: /^Main/ })).not.toBeInTheDocument();
-  });
-
-  it("reloads an account", async () => {
-    const user = userEvent.setup();
-    const { backend } = createFakeBackend([main]);
-    render(<App backend={backend} />);
-    await user.click(await screen.findByRole("button", { name: "Reload Main" }));
-    expect(backend.reloadAccount).toHaveBeenCalledWith("a");
-  });
-
-  it("shows resource usage per account and in total, refreshed periodically", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { backend, usage } = createFakeBackend([main]);
-    usage.total = { cpuPercent: 12.5, memoryBytes: 300 * 1024 * 1024, processes: 5 };
-    usage.accounts = { a: { cpuPercent: 4.2, memoryBytes: 120 * 1024 * 1024, processes: 2 } };
-    render(<App backend={backend} />);
-
-    const account = await screen.findByRole("button", { name: /^Main/ });
-    expect(await within(account).findByText("4.2% · 120 MB")).toBeInTheDocument();
-    expect(screen.getByText("Total 13% · 300 MB")).toBeInTheDocument();
-
-    usage.total = { cpuPercent: 2, memoryBytes: 200 * 1024 * 1024, processes: 5 };
-    await act(() => vi.advanceTimersByTimeAsync(2000));
-    expect(screen.getByText("Total 2% · 200 MB")).toBeInTheDocument();
-    vi.useRealTimers();
+      fake.usage.total = { cpuPercent: 4, memoryBytes: 2 * GB, processes: 5 };
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      expect(within(status).getByText("2 GB / 8 GB")).toBeInTheDocument();
+      vi.useRealTimers();
+    });
   });
 });

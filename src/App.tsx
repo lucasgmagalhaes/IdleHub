@@ -1,132 +1,91 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import type { Account, Backend, Usage, UsageReport } from "./backend";
-import { formatBytes, formatCpu } from "./format";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Backend, Rect, Tab, TabsView, WindowControls } from "./backend";
+import { Pane } from "./components/Pane";
+import { StatusBar } from "./components/StatusBar";
+import { TopBar } from "./components/TopBar";
+import { usePaneRects } from "./hooks/usePaneRects";
+import { useUsage } from "./hooks/useUsage";
+import { t } from "./strings";
 import "./App.css";
 
-export const MAX_ACCOUNTS = 4;
-const USAGE_REFRESH_MS = 2000;
-
-function describeUsage(usage: Usage | undefined): string {
-  return usage ? `${formatCpu(usage.cpuPercent)} · ${formatBytes(usage.memoryBytes)}` : "–";
+interface AppProps {
+  backend: Backend;
+  windowControls: WindowControls;
 }
 
-export function App({ backend }: { backend: Backend }) {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [focused, setFocused] = useState<string | null>(null);
-  const [usage, setUsage] = useState<UsageReport | null>(null);
-  const [newLabel, setNewLabel] = useState("");
+export function App({ backend, windowControls }: AppProps) {
+  const [view, setView] = useState<TabsView>({ tabs: [], panes: 4 });
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const usage = useUsage(backend);
+  const grid = useRef<HTMLElement>(null);
 
-  const run = useCallback(async (action: () => Promise<void>) => {
+  /** Runs a command that returns the new tabs view; reports failures in the top bar. */
+  const run = useCallback(async (command: () => Promise<TabsView | void>) => {
     try {
       setError(null);
-      await action();
+      const next = await command();
+      if (next) setView(next);
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     }
   }, []);
 
   useEffect(() => {
-    void run(async () => setAccounts(await backend.listAccounts()));
+    void run(() => backend.getTabs());
   }, [backend, run]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () =>
-      backend.usage().then(
-        (report) => !cancelled && setUsage(report),
-        () => {},
-      );
-    void refresh();
-    const timer = setInterval(refresh, USAGE_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [backend]);
+  const reportRects = useCallback((rects: Rect[]) => void backend.setPaneRects(rects).catch(() => {}), [backend]);
+  const visible = view.tabs.filter((tab) => tab.pane !== null).map((tab) => tab.id);
+  usePaneRects(grid, `${view.panes}:${visible.join(",")}:${adding}`, reportRects);
 
-  const focus = useCallback(
-    (id: string | null) =>
-      run(async () => {
-        await backend.focusAccount(id);
-        setFocused(id);
-      }),
-    [backend, run],
-  );
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void focus(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [focus]);
-
-  const add = (event: FormEvent) => {
-    event.preventDefault();
-    void run(async () => {
-      const account = await backend.addAccount(newLabel, undefined);
-      setAccounts((current) => [...current, account]);
-      setNewLabel("");
-    });
+  const close = (tab: Tab) => {
+    if (window.confirm(t.confirmClose(tab.label))) void run(() => backend.closeTab(tab.id));
   };
 
-  const remove = (account: Account) => {
-    if (!window.confirm(`Remove ${account.label}? Its session data will be deleted.`)) return;
-    void run(async () => {
-      await backend.removeAccount(account.id);
-      setAccounts((current) => current.filter((a) => a.id !== account.id));
-      if (focused === account.id) setFocused(null);
-    });
+  const add = async (label: string, url: string | undefined) => {
+    const ok = await run(() => backend.addTab(label, url));
+    if (ok) setAdding(false);
+    return ok;
   };
+
+  const tabInPane = (pane: number) => view.tabs.find((tab) => tab.pane === pane);
 
   return (
-    <header className="toolbar">
-      <button type="button" className="mode" aria-pressed={focused === null} onClick={() => void focus(null)}>
-        Grid
-      </button>
-      <ul className="accounts">
-        {accounts.map((account) => (
-          <li key={account.id} className="account">
-            <button
-              type="button"
-              className="account-focus"
-              aria-pressed={focused === account.id}
-              onClick={() => void focus(account.id)}
-            >
-              <span className="account-label">{account.label}</span>
-              <small>{describeUsage(usage?.accounts[account.id])}</small>
-            </button>
-            <button
-              type="button"
-              className="icon"
-              aria-label={`Reload ${account.label}`}
-              onClick={() => void run(() => backend.reloadAccount(account.id))}
-            >
-              ⟳
-            </button>
-            <button type="button" className="icon" aria-label={`Remove ${account.label}`} onClick={() => remove(account)}>
-              ×
-            </button>
-          </li>
-        ))}
-      </ul>
-      {accounts.length < MAX_ACCOUNTS && (
-        <form className="add" onSubmit={add}>
-          <input
-            aria-label="Account name"
-            placeholder="New account"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
+    <div className="app">
+      <TopBar
+        panes={view.panes}
+        usage={usage}
+        adding={adding}
+        error={error}
+        windowControls={windowControls}
+        onSetPanes={(count) => void run(() => backend.setPanes(count))}
+        onStartAdding={() => setAdding(true)}
+        onCancelAdding={() => {
+          setAdding(false);
+          setError(null);
+        }}
+        onAdd={add}
+      />
+      <main ref={grid} className={`pane-grid panes-${view.panes}`}>
+        {Array.from({ length: view.panes }, (_, pane) => (
+          <Pane
+            key={pane}
+            index={pane}
+            tab={tabInPane(pane)}
+            tabs={view.tabs}
+            onShow={(index, id) => void run(() => backend.showInPane(index, id))}
+            onReload={(id) => void run(() => backend.reloadTab(id))}
+            onToggleMute={(tab) => void run(() => backend.setMuted(tab.id, !tab.muted))}
+            onTogglePin={(tab) => void run(() => backend.setPinned(tab.id, !tab.pinned))}
+            onClose={close}
+            onNewTab={() => setAdding(true)}
           />
-        </form>
-      )}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      <span className="total">{usage ? `Total ${describeUsage(usage.total)}` : ""}</span>
-    </header>
+        ))}
+      </main>
+      <StatusBar tabCount={view.tabs.length} usage={usage} />
+    </div>
   );
 }
