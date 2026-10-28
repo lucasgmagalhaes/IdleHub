@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::account::{Account, AccountError, AccountId, AccountStore};
 use crate::layout::PaneCount;
 use crate::policy::{tab_policy, PolicySettings, RenderPolicy};
+#[cfg(test)]
+use crate::policy::{MAX_FPS, MIN_FPS};
 
 /// A tab as the UI and the shell see it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -26,8 +28,9 @@ pub struct Workspace {
     store: AccountStore,
     #[serde(default)]
     panes: PaneCount,
-    #[serde(skip)]
-    pub policy: PolicySettings,
+    /// Frame caps chosen by the user; older files without it get the defaults.
+    #[serde(default)]
+    policy: PolicySettings,
 }
 
 impl Workspace {
@@ -83,6 +86,15 @@ impl Workspace {
         }
         let other = accounts[to].id;
         self.store.swap(id, other)
+    }
+
+    pub fn policy(&self) -> PolicySettings {
+        self.policy
+    }
+
+    /// Stores new frame caps, clamped to what the page runtime supports.
+    pub fn set_policy(&mut self, policy: PolicySettings) {
+        self.policy = policy.clamped();
     }
 
     pub fn tabs(&self) -> Vec<TabState> {
@@ -165,14 +177,14 @@ mod tests {
         assert_eq!(
             tabs[0].policy,
             RenderPolicy {
-                max_fps: ws.policy.single_pane_fps,
+                max_fps: ws.policy().single_pane_fps,
                 muted: false
             }
         );
         assert_eq!(
             tabs[1].policy,
             RenderPolicy {
-                max_fps: ws.policy.hidden_fps,
+                max_fps: ws.policy().hidden_fps,
                 muted: true
             }
         );
@@ -235,6 +247,60 @@ mod tests {
     }
 
     #[test]
+    fn frame_caps_are_configurable_and_drive_the_tab_policies() {
+        let (mut ws, _) = workspace_with(&["A", "B"]);
+        ws.set_panes(panes(2));
+        ws.set_policy(PolicySettings {
+            single_pane_fps: 50,
+            multi_pane_fps: 20,
+            hidden_fps: 2,
+        });
+        assert_eq!(ws.policy().multi_pane_fps, 20);
+        assert!(ws.tabs().iter().all(|t| t.policy.max_fps == 20));
+    }
+
+    #[test]
+    fn frame_caps_are_clamped_when_set() {
+        let (mut ws, _) = workspace_with(&[]);
+        ws.set_policy(PolicySettings {
+            single_pane_fps: 1000,
+            multi_pane_fps: 0,
+            hidden_fps: 0,
+        });
+        assert_eq!(
+            ws.policy(),
+            PolicySettings {
+                single_pane_fps: MAX_FPS,
+                multi_pane_fps: MIN_FPS,
+                hidden_fps: MIN_FPS
+            }
+        );
+    }
+
+    #[test]
+    fn frame_caps_are_saved_with_the_workspace() {
+        let (mut ws, _) = workspace_with(&["A"]);
+        ws.set_policy(PolicySettings {
+            single_pane_fps: 45,
+            multi_pane_fps: 24,
+            hidden_fps: 2,
+        });
+        assert_eq!(
+            Workspace::from_json(&ws.to_json()).unwrap().policy(),
+            ws.policy()
+        );
+    }
+
+    #[test]
+    fn files_without_frame_caps_use_the_defaults() {
+        let json = r#"{"store":{"max_accounts":4,"accounts":[]},"panes":2}"#;
+        assert_eq!(
+            Workspace::from_json(json).unwrap().policy(),
+            PolicySettings::default()
+        );
+    }
+
+    #[test]
     fn tab_state_serializes_flat_for_the_ui() {
         let (ws, ids) = workspace_with(&["A"]);
         let json = serde_json::to_value(&ws.tabs()[0]).unwrap();
@@ -242,6 +308,6 @@ mod tests {
         assert_eq!(json["label"], "A");
         assert_eq!(json["muted"], true);
         assert_eq!(json["pane"], 0);
-        assert_eq!(json["policy"]["maxFps"], ws.policy.multi_pane_fps);
+        assert_eq!(json["policy"]["maxFps"], ws.policy().multi_pane_fps);
     }
 }

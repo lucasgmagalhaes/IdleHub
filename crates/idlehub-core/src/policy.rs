@@ -36,6 +36,16 @@ impl Default for PolicySettings {
     }
 }
 
+impl PolicySettings {
+    pub fn clamped(self) -> Self {
+        Self {
+            single_pane_fps: clamp_fps(self.single_pane_fps),
+            multi_pane_fps: clamp_fps(self.multi_pane_fps),
+            hidden_fps: clamp_fps(self.hidden_fps),
+        }
+    }
+}
+
 /// Policy of one tab. `user_muted` is the tab's speaker toggle; hidden tabs are always muted.
 pub fn tab_policy(
     visible: bool,
@@ -84,7 +94,10 @@ mod tests {
         // tab, versus ~3.5% at 5 fps (bench/sweep.bench.mjs).
         let defaults = PolicySettings::default();
         assert_eq!(defaults.hidden_fps, 1);
-        assert_eq!((defaults.single_pane_fps, defaults.multi_pane_fps), (60, 30));
+        assert_eq!(
+            (defaults.single_pane_fps, defaults.multi_pane_fps),
+            (60, 30)
+        );
     }
 
     #[test]
