@@ -41,9 +41,13 @@ All accounts share one WebView2 browser, each in its own WebView2 profile
 | 1 pane + 3 hidden | 6% | 336 MB | 16 | 60/1/1/1 | 4.0/s each |
 
 With 4 panes, the renderers use 12% CPU and the GPU process 6.6%. Hiding
-3 tabs cuts CPU by 70% while their timers keep their pace. The comparison
-with one browser per account (`IDLEHUB_WEBVIEW2_SEPARATE=1`) timed out on
-that run; the benchmark now waits longer for it.
+3 tabs cuts CPU by 70% while their timers keep their pace. Run 40719933879
+measured the same (1 pane + 3 hidden: 6%, 334 MB, 16 processes).
+
+The comparison with one browser per account (`IDLEHUB_WEBVIEW2_SEPARATE=1`)
+could not be measured: in that mode only 2–3 of the 4 tabs load, even after
+3 minutes, and the app reports no error. That mode is only a troubleshooting
+fallback, so the benchmark reports it without failing.
 
 ## Optimizations
 
@@ -57,8 +61,9 @@ that run; the benchmark now waits longer for it.
 
 ## Not done yet / ideas
 
-- **Windows memory:** the shared browser is measured above; the number for
-  one browser per account, to show the saving, is still missing.
+- **Windows browser-per-account mode:** some tabs never load in it (see the
+  Windows section), so the memory saving of the shared browser is not
+  measured yet. Needs debugging on a Windows machine.
 - **4-pane frame rate:** 20 fps instead of 30 would save ~18% per visible tab
   (see the sweep). Kept at 30 for smoothness; a good candidate for a setting.
 - **Mobile:** CPU has not been measured on devices yet; the emulator tests only
