@@ -1,0 +1,20 @@
+[package]
+name = "idlehub"
+version = "0.1.0"
+description = "Multi-account browser for idle games"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "idlehub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+idlehub-core = { path = "../crates/idlehub-core" }
+tauri = { version = "2", features = ["unstable"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.37"
