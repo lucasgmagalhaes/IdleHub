@@ -41,6 +41,28 @@ describe("useUsage", () => {
     expect(result.current).not.toBe(first);
   });
 
+  it("does not pile up requests while the host is slow to answer", async () => {
+    // A full process scan can take longer than the refresh interval on a busy machine.
+    const { backend, usage } = createFakeBackend();
+    let answer: () => void = () => {};
+    backend.usage.mockImplementation(() => new Promise((resolve) => (answer = () => resolve(structuredClone(usage)))));
+    renderHook(() => useUsage(backend));
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(backend.usage).toHaveBeenCalledTimes(1);
+
+    await act(async () => answer());
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(backend.usage).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps polling after a failed request", async () => {
+    const { backend } = createFakeBackend();
+    backend.usage.mockRejectedValueOnce("sampler busy");
+    const { result } = renderHook(() => useUsage(backend));
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(result.current).not.toBeNull();
+  });
+
   it("stops polling while the window is hidden and refreshes as soon as it is back", async () => {
     const { backend } = createFakeBackend();
     renderHook(() => useUsage(backend));

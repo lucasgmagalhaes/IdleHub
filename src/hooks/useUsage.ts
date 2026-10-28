@@ -26,14 +26,22 @@ export function useUsage(backend: Backend): UsageReport | null {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
-    const refresh = () =>
-      backend.usage().then((report) => {
-        if (cancelled) return;
-        const key = displayKey(report);
-        if (key === shown.current) return;
-        shown.current = key;
-        setUsage(report);
-      }, () => {});
+    // A slow host (a full process scan on a busy machine) must not get a queue of requests.
+    let inFlight = false;
+    const refresh = () => {
+      if (inFlight) return;
+      inFlight = true;
+      return backend
+        .usage()
+        .then((report) => {
+          if (cancelled) return;
+          const key = displayKey(report);
+          if (key === shown.current) return;
+          shown.current = key;
+          setUsage(report);
+        }, () => {}) // Meters keep their last numbers; the next tick tries again.
+        .finally(() => (inFlight = false));
+    };
     const start = () => {
       clearInterval(timer);
       void refresh();
