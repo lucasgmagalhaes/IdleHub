@@ -18,12 +18,18 @@ pub fn account_id_from_label(label: &str) -> Option<AccountId> {
 
 /// Script that runs before any page script: seeds the policy, then installs the runtime.
 pub fn initialization_script(policy: RenderPolicy) -> String {
-    format!("window.__IDLEHUB_POLICY__={};\n{RUNTIME}", policy_json(policy))
+    format!(
+        "window.__IDLEHUB_POLICY__={};\n{RUNTIME}",
+        policy_json(policy)
+    )
 }
 
 /// Script that updates the policy of an already running page.
 pub fn apply_policy_script(policy: RenderPolicy) -> String {
-    format!("window.__idlehub&&window.__idlehub.apply({});", policy_json(policy))
+    format!(
+        "window.__idlehub&&window.__idlehub.apply({});",
+        policy_json(policy)
+    )
 }
 
 fn policy_json(policy: RenderPolicy) -> String {
@@ -34,7 +40,10 @@ fn policy_json(policy: RenderPolicy) -> String {
 mod tests {
     use super::*;
 
-    const POLICY: RenderPolicy = RenderPolicy { max_fps: 5, muted: true };
+    const POLICY: RenderPolicy = RenderPolicy {
+        max_fps: 5,
+        muted: true,
+    };
 
     #[test]
     fn labels_round_trip_to_account_ids() {
@@ -53,13 +62,17 @@ mod tests {
     #[test]
     fn labels_only_use_characters_tauri_accepts() {
         let label = webview_label(AccountId::new());
-        assert!(label.chars().all(|c| c.is_ascii_alphanumeric() || "-/:_".contains(c)));
+        assert!(label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-/:_".contains(c)));
     }
 
     #[test]
     fn initialization_script_seeds_policy_before_the_runtime() {
         let script = initialization_script(POLICY);
-        let seed = script.find(r#"window.__IDLEHUB_POLICY__={"maxFps":5,"muted":true};"#).unwrap();
+        let seed = script
+            .find(r#"window.__IDLEHUB_POLICY__={"maxFps":5,"muted":true};"#)
+            .unwrap();
         let runtime = script.find(RUNTIME).unwrap();
         assert!(seed < runtime);
     }
