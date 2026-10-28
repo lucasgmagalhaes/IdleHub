@@ -70,6 +70,7 @@ impl Workspace {
     }
 
     /// Shows `id` in `pane`, swapping places with the tab that was there.
+    /// Pinned tabs that are on screen neither leave their pane nor get displaced.
     pub fn show_in_pane(&mut self, pane: usize, id: AccountId) -> Result<(), AccountError> {
         if pane >= self.panes.get() {
             return Err(AccountError::InvalidPane(pane));
@@ -81,7 +82,10 @@ impl Workspace {
         if from == to {
             return Ok(());
         }
-        if accounts[from].pinned || accounts[to].pinned {
+        // A pin holds a tab in the pane it is shown in. A pinned tab that a
+        // smaller layout pushed out of view may come back, or it would be stuck.
+        let shown_and_pinned = |i: usize| i < self.panes.get() && accounts[i].pinned;
+        if shown_and_pinned(from) || shown_and_pinned(to) {
             return Err(AccountError::Pinned);
         }
         let other = accounts[to].id;
@@ -229,6 +233,59 @@ mod tests {
         ws.set_pinned(ids[0], true).unwrap();
         assert_eq!(ws.show_in_pane(0, ids[1]), Err(AccountError::Pinned));
         assert_eq!(pane_of(&ws, ids[0]), Some(0));
+    }
+
+    #[test]
+    fn pinned_tabs_cannot_be_moved_out_of_their_pane() {
+        let (mut ws, ids) = workspace_with(&["A", "B", "C"]);
+        ws.set_panes(panes(2));
+        ws.set_pinned(ids[0], true).unwrap();
+        assert_eq!(ws.show_in_pane(1, ids[0]), Err(AccountError::Pinned));
+        assert_eq!(pane_of(&ws, ids[0]), Some(0));
+    }
+
+    #[test]
+    fn a_pinned_tab_hidden_by_a_smaller_layout_can_be_shown_again() {
+        // Pinned in pane 2, then the layout shrinks to one pane: the tab must
+        // not get stuck hidden, where its pin button is out of reach.
+        let (mut ws, ids) = workspace_with(&["A", "B"]);
+        ws.set_panes(panes(2));
+        ws.set_pinned(ids[1], true).unwrap();
+        ws.set_panes(panes(1));
+        assert_eq!(pane_of(&ws, ids[1]), None);
+
+        ws.show_in_pane(0, ids[1]).unwrap();
+        assert_eq!(pane_of(&ws, ids[1]), Some(0));
+    }
+
+    #[test]
+    fn hidden_pinned_tabs_do_not_block_showing_others() {
+        let (mut ws, ids) = workspace_with(&["A", "B", "C"]);
+        ws.set_panes(panes(2));
+        ws.set_pinned(ids[1], true).unwrap();
+        ws.set_panes(panes(1));
+        // Showing C in pane 0 swaps it with A; the hidden pinned B is not involved.
+        ws.show_in_pane(0, ids[2]).unwrap();
+        assert_eq!(pane_of(&ws, ids[2]), Some(0));
+        assert_eq!(pane_of(&ws, ids[1]), None);
+    }
+
+    #[test]
+    fn removing_a_shown_tab_moves_the_next_one_into_its_pane() {
+        let (mut ws, ids) = workspace_with(&["A", "B", "C"]);
+        ws.set_panes(panes(2));
+        ws.remove(ids[0]).unwrap();
+        assert_eq!(pane_of(&ws, ids[1]), Some(0));
+        assert_eq!(pane_of(&ws, ids[2]), Some(1));
+    }
+
+    #[test]
+    fn show_in_pane_on_an_empty_workspace_reports_the_missing_tab() {
+        let mut ws = Workspace::default();
+        assert_eq!(
+            ws.show_in_pane(0, AccountId::new()),
+            Err(AccountError::NotFound)
+        );
     }
 
     #[test]
