@@ -117,7 +117,7 @@ async function runScenario(server, display, scenario) {
   app.stdout.on("data", keep);
   app.stderr.on("data", keep);
   try {
-    await waitFor(() => server.snapshot().size === scenario.tabs, 60000, "all tabs to report").catch((error) => {
+    await waitFor(() => server.snapshot().size === scenario.tabs, scenario.loadTimeoutMs ?? 60000, "all tabs to report").catch((error) => {
       const reported = [...server.snapshot().keys()].join(", ") || "none";
       throw new Error(`${error.message} (reported: ${reported}; app exit code: ${app.exitCode})\napp output:\n${output || "(none)"}`);
     });
@@ -171,6 +171,8 @@ const scenarios = [
           panes: 4,
           tabs: ACCOUNTS,
           env: { IDLEHUB_WEBVIEW2_SEPARATE: "1" },
+          // Starts one WebView2 browser per account; on CI runners that takes over a minute.
+          loadTimeoutMs: 180000,
           expected: Array(ACCOUNTS).fill(POLICY.multiPane),
         },
       ]
