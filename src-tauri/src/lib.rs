@@ -110,8 +110,7 @@ fn update(
 ) -> CommandResult<TabsView> {
     let view = {
         let mut workspace = state.workspace.lock().unwrap();
-        change(&mut workspace)?;
-        storage::save_workspace(&state.data_dir, &workspace).map_err(to_error)?;
+        storage::commit(&state.data_dir, &mut workspace, change)?;
         view(&workspace)
     };
     sync(app, state)?;

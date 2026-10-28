@@ -42,6 +42,20 @@ pub fn save_workspace(data_dir: &Path, workspace: &Workspace) -> std::io::Result
     std::fs::rename(tmp, data_dir.join(WORKSPACE_FILE))
 }
 
+/// Applies `change` to a copy, saves it and only then replaces `workspace`, so a
+/// change is either rejected, or applied and on disk.
+pub fn commit(
+    data_dir: &Path,
+    workspace: &mut Workspace,
+    change: impl FnOnce(&mut Workspace) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut next = workspace.clone();
+    change(&mut next)?;
+    save_workspace(data_dir, &next).map_err(|error| format!("could not save the tabs: {error}"))?;
+    *workspace = next;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +119,52 @@ mod tests {
         let ws = workspace_with(&["Old"]);
         std::fs::write(dir.0.join(LEGACY_ACCOUNTS_FILE), ws.store().to_json()).unwrap();
         assert_eq!(load_workspace(&dir.0).store(), ws.store());
+    }
+
+    /// A data dir that cannot be created: its parent is a file.
+    fn unwritable(dir: &TempDir) -> PathBuf {
+        let blocker = dir.0.join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        blocker.join("data")
+    }
+
+    #[test]
+    fn changes_are_kept_once_saved() {
+        let dir = TempDir::new("commit");
+        let mut ws = Workspace::default();
+        commit(&dir.0, &mut ws, |ws| {
+            ws.add("A", None).map(drop).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(ws.store().accounts().len(), 1);
+        assert_eq!(load_workspace(&dir.0), ws);
+    }
+
+    #[test]
+    fn a_change_that_cannot_be_saved_is_rolled_back() {
+        // Otherwise the app would run a tab the UI was told failed, and lose it on restart.
+        let dir = TempDir::new("unsaved");
+        let mut ws = workspace_with(&["A"]);
+        let before = ws.clone();
+        let result = commit(&unwritable(&dir), &mut ws, |ws| {
+            ws.add("B", None).map(drop).map_err(|e| e.to_string())
+        });
+        assert!(result.is_err());
+        assert_eq!(ws, before);
+    }
+
+    #[test]
+    fn a_rejected_change_leaves_the_workspace_alone() {
+        let dir = TempDir::new("rejected");
+        let mut ws = workspace_with(&["A"]);
+        let before = ws.clone();
+        let result = commit(&dir.0, &mut ws, |ws| {
+            ws.add("B", None).unwrap();
+            Err("nope".to_owned())
+        });
+        assert_eq!(result, Err("nope".to_owned()));
+        assert_eq!(ws, before);
+        assert!(!dir.0.join(WORKSPACE_FILE).exists());
     }
 
     #[test]
