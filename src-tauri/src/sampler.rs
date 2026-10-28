@@ -1,7 +1,7 @@
 //! Samples CPU and memory of the app's process tree.
 
 use idlehub_core::metrics::ProcessSample;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub struct Sampler {
     system: System,
@@ -15,6 +15,16 @@ impl Sampler {
         // CPU usage is a delta between two refreshes; prime the first one.
         sampler.snapshot();
         sampler
+    }
+
+    pub fn total_memory(&mut self) -> u64 {
+        self.system
+            .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+        self.system.total_memory()
+    }
+
+    pub fn cpu_count(&self) -> usize {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
     }
 
     /// Current snapshot of every process. CPU is averaged since the previous call.
