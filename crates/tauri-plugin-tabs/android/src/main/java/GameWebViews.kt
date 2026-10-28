@@ -5,6 +5,7 @@ import android.app.Activity
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
@@ -146,7 +147,13 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                recreate(id)
+                try {
+                    recreate(id)
+                } catch (e: RuntimeException) {
+                    // Returning true keeps the app alive; this tab stays closed until the app restarts.
+                    Log.e("IdleHub", "could not restart tab $id after its renderer died", e)
+                    tabs.remove(id)
+                }
                 return true
             }
         }

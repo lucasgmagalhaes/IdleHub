@@ -98,14 +98,18 @@ class TabsPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun keepAlive(invoke: Invoke) {
         val args = invoke.parseArgs(KeepAliveArgs::class.java)
-        if (args.activeTabs > 0) requestNotificationPermission()
-        KeepAliveService.update(activity, args.activeTabs, args.title, args.text)
-        invoke.resolve()
+        try {
+            if (args.activeTabs > 0) requestNotificationPermission()
+            KeepAliveService.update(activity, args.activeTabs, args.title, args.text)
+            invoke.resolve()
+        } catch (e: RuntimeException) {
+            invoke.reject("Games may stop in the background: ${e.message ?: e}")
+        }
     }
 
     override fun onDestroy() {
         games?.closeAll()
-        KeepAliveService.update(activity, 0, "", "")
+        KeepAliveService.update(activity, 0, "", "") // Stopping never throws.
     }
 
     /** The service notification is hidden on Android 13+ until the user allows notifications. */
