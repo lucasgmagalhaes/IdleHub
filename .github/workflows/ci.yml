@@ -123,3 +123,36 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/
             src-tauri/gen/android/**/build/reports/
+
+  ios:
+    name: iOS
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build for the simulator (Rust and the Swift plugin)
+        run: cargo build -p idlehub --target aarch64-apple-ios-sim
+      - name: Plugin tests on the simulator
+        working-directory: crates/tauri-plugin-tabs/ios
+        run: |
+          set -o pipefail
+          xcodebuild -list
+          xcodebuild test -scheme tauri-plugin-tabs -destination 'platform=iOS Simulator,name=iPhone 16' | tail -120
+      - name: Build the app bundle (exploratory)
+        continue-on-error: true
+        run: |
+          pnpm tauri ios init --ci
+          pnpm tauri ios build --debug --target aarch64-sim
