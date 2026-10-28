@@ -94,7 +94,8 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
     /// Closes the tab for good and erases its data store: the account is logged out.
     func forget(id: String) {
         guard let profile = tabs[id]?.profile else { return }
-        close(id)
+        // Unlabelled, `close(id)` would resolve to the C function close(Int32).
+        close(id: id)
         if #available(iOS 17.0, *) {
             Self.removeDataStore(profile, attemptsLeft: 10)
         }
