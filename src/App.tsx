@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Backend, Rect, Tab, TabsView, WindowControls } from "./backend";
+import type { Backend, Rect, Settings, Tab, TabsView, WindowControls } from "./backend";
 import { Pane } from "./components/Pane";
+import { SettingsView } from "./components/SettingsView";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { TopBar } from "./components/TopBar";
@@ -20,6 +21,7 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
   const mobile = layout === "mobile";
   const [view, setView] = useState<TabsView>({ tabs: [], panes: 4 });
   const [adding, setAdding] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const usage = useUsage(backend);
   const grid = useRef<HTMLElement>(null);
@@ -43,7 +45,9 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
 
   const reportRects = useCallback((rects: Rect[]) => void backend.setPaneRects(rects).catch(() => {}), [backend]);
   const visible = view.tabs.filter((tab) => tab.pane !== null).map((tab) => tab.id);
-  usePaneRects(grid, `${view.panes}:${visible.join(",")}:${adding}`, reportRects);
+  usePaneRects(grid, `${view.panes}:${visible.join(",")}:${adding}:${settingsOpen}`, reportRects);
+  const loadSettings = useCallback(() => backend.getSettings(), [backend]);
+  const saveSettings = (settings: Settings) => run(() => backend.setSettings(settings));
 
   const close = (tab: Tab) => {
     if (window.confirm(t.confirmClose(tab.label))) void run(() => backend.closeTab(tab.id));
@@ -73,9 +77,11 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
           setError(null);
         }}
         onAdd={add}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
-      <main ref={grid} className={`pane-grid panes-${view.panes}`}>
-        {Array.from({ length: view.panes }, (_, pane) => (
+      <main ref={grid} className={settingsOpen ? "settings-page" : `pane-grid panes-${view.panes}`}>
+        {settingsOpen && <SettingsView load={loadSettings} onSave={saveSettings} onClose={() => setSettingsOpen(false)} />}
+        {!settingsOpen && Array.from({ length: view.panes }, (_, pane) => (
           <Pane
             key={pane}
             index={pane}

@@ -1,4 +1,4 @@
-import type { Backend, Tab, TabsView, UsageReport, WindowControls } from "../backend";
+import type { Backend, Settings, Tab, TabsView, UsageReport, WindowControls } from "../backend";
 
 type TabInput = Pick<Tab, "label" | "url"> & Partial<Pick<Tab, "id" | "muted" | "pinned">>;
 
@@ -7,6 +7,7 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
   let nextId = 1;
   let tabs = initial.map((t) => ({ id: t.id ?? `id-${nextId++}`, muted: true, pinned: false, ...t }));
   let paneCount = panes;
+  let settings: Settings = { singlePaneFps: 60, multiPaneFps: 30, hiddenFps: 1 };
   const usage: UsageReport = {
     total: { cpuPercent: 0, memoryBytes: 0, processes: 0 },
     accounts: {},
@@ -19,7 +20,10 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
     tabs: tabs.map((t, i) => ({
       ...t,
       pane: i < paneCount ? i : null,
-      policy: { maxFps: i < paneCount ? 30 : 5, muted: i >= paneCount || t.muted },
+      policy: {
+        maxFps: i >= paneCount ? settings.hiddenFps : paneCount === 1 ? settings.singlePaneFps : settings.multiPaneFps,
+        muted: i >= paneCount || t.muted,
+      },
     })),
   });
   const find = (id: string) => {
@@ -57,6 +61,11 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
     }),
     setPinned: vi.fn(async (id: string, pinned: boolean) => {
       find(id).pinned = pinned;
+      return view();
+    }),
+    getSettings: vi.fn(async () => ({ ...settings })),
+    setSettings: vi.fn(async (next: Settings) => {
+      settings = { ...next };
       return view();
     }),
     reloadTab: vi.fn(async (_id: string) => {}),

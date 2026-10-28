@@ -43,6 +43,13 @@ export interface UsageReport {
 }
 
 /** Everything the UI needs from the host app; faked in tests. */
+/** Frame caps; mirrors `PolicySettings` in crates/idlehub-core/src/policy.rs. */
+export interface Settings {
+  singlePaneFps: number;
+  multiPaneFps: number;
+  hiddenFps: number;
+}
+
 export interface Backend {
   getTabs(): Promise<TabsView>;
   addTab(label: string, url?: string): Promise<TabsView>;
@@ -51,6 +58,8 @@ export interface Backend {
   showInPane(pane: number, id: string): Promise<TabsView>;
   setMuted(id: string, muted: boolean): Promise<TabsView>;
   setPinned(id: string, pinned: boolean): Promise<TabsView>;
+  getSettings(): Promise<Settings>;
+  setSettings(settings: Settings): Promise<TabsView>;
   reloadTab(id: string): Promise<void>;
   /** Content area of each pane, in pane order, in window coordinates. */
   setPaneRects(rects: Rect[]): Promise<void>;
@@ -73,6 +82,8 @@ export const tauriBackend: Backend = {
   showInPane: (pane, id) => invoke("show_in_pane", { pane, id }),
   setMuted: (id, muted) => invoke("set_muted", { id, muted }),
   setPinned: (id, pinned) => invoke("set_pinned", { id, pinned }),
+  getSettings: () => invoke("get_settings"),
+  setSettings: (settings) => invoke("set_settings", { settings }),
   reloadTab: (id) => invoke("reload_tab", { id }),
   setPaneRects: (rects) => invoke("set_pane_rects", { rects }),
   usage: () => invoke("usage_report"),

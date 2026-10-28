@@ -1,4 +1,4 @@
-import type { Backend, Tab, TabsView, UsageReport, WindowControls } from "./backend";
+import type { Backend, Settings, Tab, TabsView, UsageReport, WindowControls } from "./backend";
 
 /**
  * In-browser stand-in for the Tauri host, used by `pnpm dev` outside the app
@@ -7,6 +7,7 @@ import type { Backend, Tab, TabsView, UsageReport, WindowControls } from "./back
 export function createDemoBackend(initialPanes = 4): Backend {
   let nextId = 1;
   let panes = initialPanes;
+  let settings: Settings = { singlePaneFps: 60, multiPaneFps: 30, hiddenFps: 1 };
   let tabs: Omit<Tab, "pane" | "policy">[] = [
     ["Cookie Clicker", "https://orteil.dashnet.org/cookieclicker/", true],
     ["Melvor Idle", "https://melvoridle.com", false],
@@ -47,6 +48,11 @@ export function createDemoBackend(initialPanes = 4): Backend {
     },
     setPinned: async (id, pinned) => {
       find(id).pinned = pinned;
+      return view();
+    },
+    getSettings: async () => ({ ...settings }),
+    setSettings: async (next) => {
+      settings = { ...next };
       return view();
     },
     reloadTab: async () => {},

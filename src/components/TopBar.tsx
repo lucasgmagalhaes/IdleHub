@@ -1,4 +1,4 @@
-import { Columns2, LayoutGrid, LayoutPanelLeft, Minus, Plus, Square, X } from "lucide-react";
+import { Columns2, LayoutGrid, LayoutPanelLeft, Minus, Plus, Settings, Square, X } from "lucide-react";
 import type { UsageReport, WindowControls } from "../backend";
 import { formatBytes, formatCpu } from "../format";
 import { t } from "../strings";
@@ -19,6 +19,7 @@ interface TopBarProps {
   onStartAdding(): void;
   onCancelAdding(): void;
   onAdd(label: string, url: string | undefined): Promise<boolean>;
+  onOpenSettings(): void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -82,6 +83,10 @@ export function TopBar(props: TopBarProps) {
         percent={systemMemory ? (memory / systemMemory) * 100 : 0}
         text={compact ? formatBytes(memory) : `${formatBytes(memory)} / ${formatBytes(systemMemory)}`}
       />
+
+      <button type="button" className="icon-button settings-button" aria-label={t.settings} onClick={props.onOpenSettings}>
+        <Settings size={20} />
+      </button>
 
       {!windowControls.native && !compact && (
         <div className="window-controls">
