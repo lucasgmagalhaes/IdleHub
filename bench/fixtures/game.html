@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Synthetic idle game</title>
+    <style>html,body{margin:0;background:#111}canvas{display:block}</style>
+  </head>
+  <body>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script>
+      // Stand-in for a canvas game: a full redraw every frame plus a server tick.
+      const ctx = document.getElementById("c").getContext("2d");
+      const sprites = Array.from({ length: 1500 }, (_, i) => ({
+        x: (i * 37) % 800, y: (i * 91) % 600, dx: (i % 7) - 3, dy: (i % 5) - 2, hue: (i * 13) % 360,
+      }));
+      window.stats = { frames: 0, ticks: 0, hidden: 0 };
+      document.addEventListener("visibilitychange", () => { if (document.hidden) window.stats.hidden++; });
+      setInterval(() => { window.stats.ticks++; }, 250);
+      function frame() {
+        window.stats.frames++;
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, 800, 600);
+        for (const s of sprites) {
+          s.x = (s.x + s.dx + 800) % 800;
+          s.y = (s.y + s.dy + 600) % 600;
+          ctx.fillStyle = `hsl(${s.hue} 80% 60%)`;
+          ctx.fillRect(s.x, s.y, 6, 6);
+        }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
