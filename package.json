@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm build:inject && tsc --noEmit && vite build",
-    "build:inject": "esbuild inject/index.ts --bundle --minify --format=iife --target=es2020 --outfile=dist-inject/inject.js",
+    "build:inject": "esbuild inject/index.ts --bundle --minify --format=iife --target=es2021 --outfile=dist-inject/inject.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

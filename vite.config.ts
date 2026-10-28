@@ -7,7 +7,7 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_ENV_"],
-  build: { target: "es2020", outDir: "dist" },
+  build: { target: "es2021", outDir: "dist" },
   test: {
     globals: true,
     environment: "jsdom",
