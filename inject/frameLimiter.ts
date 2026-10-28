@@ -14,6 +14,8 @@ export interface FrameLimiter {
 
 const MIN_FPS = 1;
 const MAX_FPS = 240;
+/** Tolerance for frames that land a hair before they are due. */
+const SLACK_MS = 2;
 
 /**
  * Replaces requestAnimationFrame with a version capped at `maxFps`.
@@ -34,7 +36,8 @@ export function installFrameLimiter(
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextId = 1;
   let interval = 0;
-  let lastFrame = -Infinity;
+  /** Wall-clock time the next frame is due. */
+  let nextDue = -Infinity;
   let scheduled = false;
   let fps = MIN_FPS;
 
@@ -43,9 +46,19 @@ export function installFrameLimiter(
     interval = 1000 / fps;
   }
 
+  // Timing uses performance.now() at delivery, not the rAF timestamp: browsers
+  // stamp callbacks with the frame's start time but run them later, so a request
+  // made after a timer wakes up can still land in an already started frame.
   function flush(timestamp: number) {
+    const now = host.performance.now();
+    if (now < nextDue - SLACK_MS) {
+      request(flush); // Too early: wait for another vsync.
+      return;
+    }
     scheduled = false;
-    lastFrame = timestamp;
+    // Advance by whole intervals so caps between display rates (45 fps on 60 Hz)
+    // alternate frames; after a long pause, restart from now instead of bursting.
+    nextDue = now - nextDue > interval ? now + interval : nextDue + interval;
     const due = [...callbacks.values()];
     callbacks.clear();
     for (const cb of due) {
@@ -60,8 +73,7 @@ export function installFrameLimiter(
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    // Small slack so a frame landing a hair early is not pushed a whole vsync later.
-    const wait = lastFrame + interval - host.performance.now() - 2;
+    const wait = nextDue - SLACK_MS - host.performance.now();
     if (wait > 0) host.setTimeout(() => request(flush), wait);
     else request(flush);
   }

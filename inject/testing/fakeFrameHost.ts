@@ -1,7 +1,12 @@
 import type { FrameHost } from "../frameLimiter";
 
-/** A deterministic 60 Hz display with a manual clock, for frame limiter tests. */
-export function createFakeFrameHost(displayHz = 60) {
+/**
+ * A deterministic 60 Hz display with a manual clock, for frame limiter tests.
+ *
+ * `callbackLagMs` mimics real browsers: callbacks get the frame's start time as
+ * timestamp but run later, and requests made before they run join that frame.
+ */
+export function createFakeFrameHost(displayHz = 60, callbackLagMs = 0) {
   let now = 0;
   let nextId = 1;
   let nativeFrameRequests = 0;
@@ -9,6 +14,7 @@ export function createFakeFrameHost(displayHz = 60) {
   const timers = new Map<number, { at: number; fn: () => void }>();
   const frameInterval = 1000 / displayHz;
   let nextVsync = frameInterval;
+  const dispatches: { at: number; timestamp: number }[] = [];
 
   const host: FrameHost = {
     requestAnimationFrame(cb) {
@@ -42,10 +48,14 @@ export function createFakeFrameHost(displayHz = 60) {
         }
       }
       if (now >= nextVsync) {
+        dispatches.push({ at: nextVsync + callbackLagMs, timestamp: nextVsync });
         nextVsync += frameInterval;
+      }
+      while (dispatches.length && dispatches[0].at <= now) {
+        const { timestamp } = dispatches.shift()!;
         const due = [...frames.values()];
         frames.clear();
-        for (const cb of due) cb(now);
+        for (const cb of due) cb(timestamp);
       }
     }
   }

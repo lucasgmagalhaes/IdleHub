@@ -30,6 +30,24 @@ describe("installFrameLimiter", () => {
     expect(frames.length).toBeLessThanOrEqual(11);
   });
 
+  it.each([30, 20, 45])("caps at %i fps when callbacks run late in the frame", (cap) => {
+    const fake = createFakeFrameHost(60, 15);
+    installFrameLimiter(fake.host, cap);
+    const frames = startGameLoop(fake.host);
+    fake.advance(2000);
+    const fps = frames.length / 2;
+    expect(fps).toBeGreaterThanOrEqual(cap * 0.85);
+    expect(fps).toBeLessThanOrEqual(cap * 1.05);
+  });
+
+  it("still reaches the display rate with late callbacks when uncapped", () => {
+    const fake = createFakeFrameHost(60, 15);
+    installFrameLimiter(fake.host, 60);
+    const frames = startGameLoop(fake.host);
+    fake.advance(2000);
+    expect(frames.length / 2).toBeGreaterThanOrEqual(57);
+  });
+
   it("does not wake up on every vsync while throttled", () => {
     const fake = createFakeFrameHost(60);
     installFrameLimiter(fake.host, 5);
