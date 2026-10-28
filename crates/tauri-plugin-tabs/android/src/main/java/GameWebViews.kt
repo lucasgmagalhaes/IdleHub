@@ -3,6 +3,8 @@ package com.lucasgmagalhaes.idlehub.tabs
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
@@ -69,10 +71,29 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
         tabs[id]?.webView?.reload()
     }
 
+    /** Removes the tab's webview; its profile (login, storage) stays for the next launch. */
     fun close(id: String) {
         val tab = tabs.remove(id) ?: return
         layer.removeView(tab.webView)
         tab.webView.destroy()
+    }
+
+    /** Closes the tab for good and erases its profile: the account is logged out. */
+    fun forget(id: String) {
+        val profile = tabs[id]?.profile ?: return
+        close(id)
+        deleteProfile(profile, PROFILE_DELETE_ATTEMPTS)
+    }
+
+    /** A destroyed WebView releases its profile asynchronously; retry until it is free. */
+    private fun deleteProfile(name: String, attemptsLeft: Int) {
+        try {
+            ProfileStore.getInstance().deleteProfile(name)
+        } catch (e: IllegalStateException) {
+            if (attemptsLeft > 1) {
+                Handler(Looper.getMainLooper()).postDelayed({ deleteProfile(name, attemptsLeft - 1) }, PROFILE_DELETE_RETRY_MS)
+            }
+        }
     }
 
     fun closeAll() {
@@ -147,6 +168,11 @@ class GameWebViews(private val activity: Activity, private val uiWebView: WebVie
             leftMargin = bounds.left
             topMargin = bounds.top
         }
+
+    private companion object {
+        const val PROFILE_DELETE_ATTEMPTS = 10
+        const val PROFILE_DELETE_RETRY_MS = 300L
+    }
 
     /** A rect in CSS pixels of the UI webview. */
     data class Css(val x: Double, val y: Double, val width: Double, val height: Double)

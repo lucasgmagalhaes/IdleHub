@@ -2,6 +2,7 @@ package com.lucasgmagalhaes.idlehub.tabs
 
 import android.webkit.WebView
 import androidx.lifecycle.Lifecycle
+import androidx.webkit.ProfileStore
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.util.concurrent.CountDownLatch
@@ -9,6 +10,8 @@ import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -100,6 +103,29 @@ class GameWebViewsTest {
             assertEquals(Math.round(100 * density), params.width)
             assertEquals(Math.round(20 * density), params.topMargin)
         }
+    }
+
+    @Test
+    fun forgettingATabDeletesItsProfile() {
+        // Closing a tab promises the user that its login and data are erased.
+        scenario.onActivity { it.games.open("gone", game, "profile-forget", "") }
+        Thread.sleep(1_000)
+        scenario.onActivity { it.games.forget("gone") }
+        Thread.sleep(3_000)
+        scenario.onActivity {
+            assertNull(it.games.webViewOf("gone"))
+            assertNull(ProfileStore.getInstance().getProfile("profile-forget"))
+        }
+    }
+
+    @Test
+    fun closingEverythingKeepsTheProfiles() {
+        // The activity going away must not log every account out.
+        scenario.onActivity { it.games.open("kept", game, "profile-kept", "") }
+        Thread.sleep(1_000)
+        scenario.onActivity { it.games.closeAll() }
+        Thread.sleep(1_000)
+        scenario.onActivity { assertNotNull(ProfileStore.getInstance().getProfile("profile-kept")) }
     }
 
     private fun ticks(id: String): Int = eval(id, "window.ticks").toInt()

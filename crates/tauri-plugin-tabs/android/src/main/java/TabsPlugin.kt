@@ -91,7 +91,8 @@ class TabsPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun close(invoke: Invoke) {
         val args = invoke.parseArgs(TabArgs::class.java)
-        onUiThread(invoke) { it.close(args.id) }
+        // Only the user closes tabs; their data goes with them.
+        onUiThread(invoke) { it.forget(args.id) }
     }
 
     @Command
