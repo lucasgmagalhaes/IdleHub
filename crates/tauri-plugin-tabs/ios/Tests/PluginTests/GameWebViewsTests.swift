@@ -10,8 +10,10 @@ final class GameWebViewsTests: XCTestCase {
     private let game = "data:text/html,%3Cscript%3Ewindow.ticks%3D0%3BsetInterval(()%3D%3Ewindow.ticks%2B%2B%2C100)%3C%2Fscript%3E"
     private var window: UIWindow!
     private var games: GameWebViews!
+    private var server: LocalServer!
 
     override func setUp() async throws {
+        server = try LocalServer()
         window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
@@ -24,6 +26,7 @@ final class GameWebViewsTests: XCTestCase {
     override func tearDown() async throws {
         games.closeAll()
         window = nil
+        server.stop()
     }
 
     func testParkedTabKeepsTheSameTimerRateAsTheVisibleOne() async throws {
@@ -44,7 +47,7 @@ final class GameWebViewsTests: XCTestCase {
     }
 
     func testAccountsDoNotShareStorage() async throws {
-        let page = "https://example.com/"
+        let page = server.url
         try games.open(id: "a", url: page, profile: UUID().uuidString, initScript: "")
         try games.open(id: "b", url: page, profile: UUID().uuidString, initScript: "")
         try await waitForLoad("a")
@@ -69,7 +72,7 @@ final class GameWebViewsTests: XCTestCase {
     func testForgettingATabDeletesItsDataStore() async throws {
         // Closing a tab promises the user that its login and data are erased.
         let profile = UUID()
-        try games.open(id: "gone", url: "https://example.com/", profile: profile.uuidString, initScript: "")
+        try games.open(id: "gone", url: server.url, profile: profile.uuidString, initScript: "")
         try await waitForLoad("gone")
         let before = await dataStores()
         XCTAssertTrue(before.contains(profile))
@@ -89,7 +92,7 @@ final class GameWebViewsTests: XCTestCase {
     func testClosingEverythingKeepsTheDataStores() async throws {
         // The app going away must not log every account out.
         let profile = UUID()
-        try games.open(id: "kept", url: "https://example.com/", profile: profile.uuidString, initScript: "")
+        try games.open(id: "kept", url: server.url, profile: profile.uuidString, initScript: "")
         try await waitForLoad("kept")
         games.closeAll()
         try await sleep(1)
@@ -108,12 +111,12 @@ final class GameWebViewsTests: XCTestCase {
     }
 
     /// Waits until the tab shows its page: a fixed sleep fails when the simulator
-    /// is slow to start WebKit (90 s seen on CI for the first page), and storage throws before then.
-    private func waitForLoad(_ id: String, timeout: Double = 180) async throws {
+    /// is slow to start WebKit (10–20 s on CI), and storage throws before then.
+    private func waitForLoad(_ id: String, timeout: Double = 120) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let href = try? await eval(id, "document.readyState === 'complete' ? location.href : ''") as? String
-            if let href, href.hasPrefix("https://") { return }
+            if let href, href.hasPrefix(server.url) { return }
             try await sleep(0.5)
         }
         XCTFail("tab \(id) did not load in \(timeout) s")
