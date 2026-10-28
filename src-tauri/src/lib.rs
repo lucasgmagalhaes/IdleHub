@@ -3,12 +3,13 @@ mod copy;
 mod host;
 mod sampler;
 mod scripts;
+mod storage;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use idlehub_core::account::{AccountId, AccountStore};
+use idlehub_core::account::AccountId;
 use idlehub_core::layout::{PaneCount, Rect};
 use idlehub_core::metrics::{self, UsageReport};
 use idlehub_core::policy::{PolicySettings, RenderPolicy};
@@ -18,9 +19,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use sampler::Sampler;
-
-const WORKSPACE_FILE: &str = "workspace.json";
-const LEGACY_ACCOUNTS_FILE: &str = "accounts.json";
 
 struct AppState {
     data_dir: PathBuf,
@@ -50,27 +48,12 @@ fn to_error(error: impl std::fmt::Display) -> String {
 }
 
 fn load_workspace(data_dir: &Path) -> Workspace {
-    let read = |file| std::fs::read_to_string(data_dir.join(file)).ok();
-    let mut workspace = read(WORKSPACE_FILE)
-        .and_then(|json| Workspace::from_json(&json).ok())
-        .unwrap_or_else(|| {
-            let store = read(LEGACY_ACCOUNTS_FILE)
-                .and_then(|json| AccountStore::from_json(&json).ok())
-                .unwrap_or_default();
-            Workspace::new(store)
-        });
+    let mut workspace = storage::load_workspace(data_dir);
     // Phones show one tab at a time; the others keep running hidden.
     if cfg!(mobile) {
         workspace.set_panes(PaneCount::new(1).expect("1 is a valid pane count"));
     }
     workspace
-}
-
-fn save_workspace(data_dir: &Path, workspace: &Workspace) -> CommandResult<()> {
-    std::fs::create_dir_all(data_dir).map_err(to_error)?;
-    let tmp = data_dir.join(format!("{WORKSPACE_FILE}.tmp"));
-    std::fs::write(&tmp, workspace.to_json()).map_err(to_error)?;
-    std::fs::rename(tmp, data_dir.join(WORKSPACE_FILE)).map_err(to_error)
 }
 
 fn view(workspace: &Workspace) -> TabsView {
@@ -116,7 +99,7 @@ fn update(
     let view = {
         let mut workspace = state.workspace.lock().unwrap();
         change(&mut workspace)?;
-        save_workspace(&state.data_dir, &workspace)?;
+        storage::save_workspace(&state.data_dir, &workspace).map_err(to_error)?;
         view(&workspace)
     };
     sync(app, state)?;
