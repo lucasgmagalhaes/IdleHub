@@ -75,11 +75,15 @@ final class GameWebViewsTests: XCTestCase {
         XCTAssertTrue(before.contains(profile))
 
         games.forget(id: "gone")
-        try await sleep(3)
-
         XCTAssertNil(games.webView(for: "gone"))
-        let after = await dataStores()
-        XCTAssertFalse(after.contains(profile))
+
+        // Removal waits for WebKit to release the store, which is slow on CI simulators.
+        var removed = false
+        for _ in 0..<60 where !removed {
+            try await sleep(0.5)
+            removed = await !dataStores().contains(profile)
+        }
+        XCTAssertTrue(removed, "the data store was still there after 30 s")
     }
 
     func testClosingEverythingKeepsTheDataStores() async throws {
@@ -104,8 +108,8 @@ final class GameWebViewsTests: XCTestCase {
     }
 
     /// Waits until the tab shows its page: a fixed sleep fails when the simulator
-    /// is slow to start WebKit (13 s seen on CI), and storage throws before then.
-    private func waitForLoad(_ id: String, timeout: Double = 60) async throws {
+    /// is slow to start WebKit (90 s seen on CI for the first page), and storage throws before then.
+    private func waitForLoad(_ id: String, timeout: Double = 180) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let href = try? await eval(id, "document.readyState === 'complete' ? location.href : ''") as? String

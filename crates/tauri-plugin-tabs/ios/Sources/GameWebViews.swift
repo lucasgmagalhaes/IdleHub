@@ -44,6 +44,11 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
 
     init(uiWebView: UIView) {
         self.uiWebView = uiWebView
+        super.init()
+        // No webview exists yet, so stores a previous run could not remove can go now.
+        if #available(iOS 17.0, *) {
+            Self.pendingRemovals.forEach { Self.removeDataStore($0, attemptsLeft: 1) }
+        }
     }
 
     var count: Int { tabs.count }
@@ -93,23 +98,44 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
 
     /// Closes the tab for good and erases its data store: the account is logged out.
     func forget(id: String) {
-        guard let profile = tabs[id]?.profile else { return }
+        guard let tab = tabs[id] else { return }
+        // The store itself can only be removed once no webview uses it, which may take
+        // until the next launch; its cookies and storage are erased right away.
+        let store = tab.webView.configuration.websiteDataStore
+        store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
         // Unlabelled, `close(id)` would resolve to the C function close(Int32).
         close(id: id)
         if #available(iOS 17.0, *) {
-            Self.removeDataStore(profile, attemptsLeft: 10)
+            Self.setPending(tab.profile, true)
+            Self.removeDataStore(tab.profile, attemptsLeft: 20)
         }
     }
 
-    /// The store is busy until the closed webview is released; retry until it is free.
+    /// Retries while the released webview still holds the store; gives up until the next launch.
     @available(iOS 17.0, *)
     private static func removeDataStore(_ profile: UUID, attemptsLeft: Int) {
         WKWebsiteDataStore.remove(forIdentifier: profile) { error in
-            guard error != nil, attemptsLeft > 1 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if error == nil {
+                GameWebViews.setPending(profile, false)
+                return
+            }
+            guard attemptsLeft > 1 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 GameWebViews.removeDataStore(profile, attemptsLeft: attemptsLeft - 1)
             }
         }
+    }
+
+    private static let pendingKey = "idlehub.pendingDataStoreRemovals"
+
+    private static var pendingRemovals: [UUID] {
+        (UserDefaults.standard.stringArray(forKey: pendingKey) ?? []).compactMap(UUID.init(uuidString:))
+    }
+
+    private static func setPending(_ profile: UUID, _ pending: Bool) {
+        var ids = Set(pendingRemovals)
+        if pending { ids.insert(profile) } else { ids.remove(profile) }
+        UserDefaults.standard.set(ids.map(\.uuidString), forKey: pendingKey)
     }
 
     func closeAll() {
