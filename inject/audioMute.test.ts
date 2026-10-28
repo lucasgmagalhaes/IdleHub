@@ -88,6 +88,44 @@ describe("installAudioMute", () => {
     expect(ctx.state).toBe("running");
   });
 
+  it("mutes media that starts on its own (autoplay) while muted", () => {
+    uninstall = installAudioMute(asWindow(win), true).uninstall;
+    const music = document.createElement("audio");
+    music.autoplay = true;
+    document.body.append(music);
+    // Autoplay starts playback without calling play(); the browser fires "play".
+    music.dispatchEvent(new Event("play"));
+    expect(music.muted).toBe(true);
+  });
+
+  it("leaves autoplaying media alone while unmuted", () => {
+    uninstall = installAudioMute(asWindow(win), false).uninstall;
+    const music = document.createElement("audio");
+    document.body.append(music);
+    music.dispatchEvent(new Event("play"));
+    expect(music.muted).toBe(false);
+  });
+
+  it("does not resume contexts the game had suspended itself", async () => {
+    const control = installAudioMute(asWindow(win), false);
+    uninstall = control.uninstall;
+    const ctx = new (win.AudioContext as unknown as typeof FakeAudioContext)();
+    await ctx.suspend(); // e.g. the game's own pause menu
+
+    control.setMuted(true);
+    control.setMuted(false);
+    await Promise.resolve();
+    expect(ctx.state).toBe("suspended");
+  });
+
+  it("stops muting new media after uninstall", () => {
+    installAudioMute(asWindow(win), true).uninstall();
+    const music = document.createElement("audio");
+    document.body.append(music);
+    music.dispatchEvent(new Event("play"));
+    expect(music.muted).toBe(false);
+  });
+
   it("reports the current state", () => {
     const control = installAudioMute(asWindow(win), false);
     uninstall = control.uninstall;

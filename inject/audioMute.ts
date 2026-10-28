@@ -32,7 +32,8 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
   }
 
   function suspend(ctx: AudioContext) {
-    if (ctx.state === "closed" || suspendedByUs.has(ctx)) return;
+    // A context the game paused itself stays the game's to resume.
+    if (ctx.state !== "running" || suspendedByUs.has(ctx)) return;
     suspendedByUs.add(ctx);
     void ctx.suspend();
   }
@@ -71,6 +72,12 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
     return nativePlay.call(this);
   };
 
+  // Autoplay starts media without play(). "play" does not bubble, but capture on window sees it first.
+  const onPlay = (event: Event) => {
+    if (muted && event.target instanceof win.HTMLMediaElement) muteMedia(event.target);
+  };
+  win.addEventListener("play", onPlay, true);
+
   function wrapContext<T extends typeof AudioContext>(Native: T): T {
     return class extends (Native as typeof AudioContext) {
       constructor(...args: ConstructorParameters<typeof AudioContext>) {
@@ -107,6 +114,7 @@ export function installAudioMute(win: AudioWindow, initiallyMuted: boolean): Aud
     },
     uninstall() {
       mediaPrototype.play = nativePlay;
+      win.removeEventListener("play", onPlay, true);
       win.AudioContext = nativeContexts.AudioContext;
       if (nativeContexts.webkitAudioContext) win.webkitAudioContext = nativeContexts.webkitAudioContext;
     },
