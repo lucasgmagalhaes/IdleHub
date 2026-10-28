@@ -31,7 +31,7 @@ impl Default for PolicySettings {
         Self {
             single_pane_fps: 60,
             multi_pane_fps: 30,
-            hidden_fps: 5,
+            hidden_fps: 1,
         }
     }
 }
@@ -76,6 +76,15 @@ mod tests {
 
     fn panes(n: u8) -> PaneCount {
         PaneCount::new(n).unwrap()
+    }
+
+    #[test]
+    fn defaults_render_hidden_tabs_at_one_frame_per_second() {
+        // Nobody sees them; 1 fps keeps rAF-driven game loops alive at ~1% CPU per
+        // tab, versus ~3.5% at 5 fps (bench/sweep.bench.mjs).
+        let defaults = PolicySettings::default();
+        assert_eq!(defaults.hidden_fps, 1);
+        assert_eq!((defaults.single_pane_fps, defaults.multi_pane_fps), (60, 30));
     }
 
     #[test]

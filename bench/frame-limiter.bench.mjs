@@ -21,7 +21,7 @@ const WARMUP_MS = 1500;
 const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 5000);
 
 // Mirrors `PolicySettings::default()` in crates/idlehub-core/src/policy.rs.
-const POLICY = { singlePane: 60, multiPane: 30, hidden: 5 };
+const POLICY = { singlePane: 60, multiPane: 30, hidden: 1 };
 const policy = (maxFps, muted = true) => ({ maxFps, muted });
 
 const scenarios = [
