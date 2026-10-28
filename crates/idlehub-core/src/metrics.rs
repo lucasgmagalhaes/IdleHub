@@ -44,6 +44,10 @@ pub struct UsageReport {
     pub total: Usage,
     /// Usage attributed to each account's profile.
     pub accounts: HashMap<AccountId, Usage>,
+    /// Physical memory of the machine, to show usage as a share of it.
+    pub system_memory_bytes: u64,
+    /// Logical CPUs; `total.cpu_percent / cpu_count` is the share of the whole machine.
+    pub cpu_count: usize,
 }
 
 /// Builds a report for the process tree rooted at `root`.
@@ -210,6 +214,15 @@ mod tests {
         assert!(!usage_report(&snapshot, 10, &profiles)
             .accounts
             .contains_key(&a));
+    }
+
+    #[test]
+    fn report_serializes_in_camel_case_for_the_ui() {
+        let report = UsageReport { system_memory_bytes: 8, cpu_count: 4, ..UsageReport::default() };
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["systemMemoryBytes"], 8);
+        assert_eq!(json["cpuCount"], 4);
+        assert_eq!(json["total"]["memoryBytes"], 0);
     }
 
     #[test]
