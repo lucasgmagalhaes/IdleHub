@@ -63,6 +63,7 @@ export function createDemoBackend(initialPanes = 4): Backend {
       systemMemoryBytes: 8 * 1024 ** 3,
       cpuCount: 4,
     }),
+    onHostError: () => () => {},
   };
 }
 

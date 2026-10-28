@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createFakeBackend, createFakeWindowControls } from "./test/fakeBackend";
@@ -33,6 +33,33 @@ describe("App", () => {
     await act(async () => finishSlow());
 
     expect(panes()).toHaveLength(3);
+  });
+
+  describe("host errors", () => {
+    it("shows problems the host reports on its own", async () => {
+      const { emitHostError } = setup();
+      await screen.findAllByRole("region", { name: /^Painel/ });
+
+      act(() => emitHostError("Tab 2: the webview could not be created"));
+
+      expect(screen.getByRole("alert")).toHaveTextContent("Tab 2: the webview could not be created");
+    });
+
+    it("shows when the host cannot place the panes", async () => {
+      const { backend } = createFakeBackend([cookie]);
+      backend.setPaneRects.mockRejectedValue("main window is gone");
+      render(<App backend={backend} windowControls={createFakeWindowControls()} />);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("main window is gone");
+    });
+
+    it("stops listening when closed", async () => {
+      const { emitHostError, listeners } = setup();
+      await screen.findAllByRole("region", { name: /^Painel/ });
+      cleanup();
+      expect(listeners()).toBe(0);
+      emitHostError("late");
+    });
   });
 
   describe("top bar", () => {

@@ -16,7 +16,7 @@ use idlehub_core::policy::{PolicySettings, RenderPolicy};
 use idlehub_core::profile::profile_for;
 use idlehub_core::workspace::{TabState, Workspace};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use sampler::Sampler;
 
@@ -45,6 +45,18 @@ type CommandResult<T> = Result<T, String>;
 
 fn to_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+/// Event the UI listens to for errors that no command can return (see `src/backend.ts`).
+const HOST_ERROR_EVENT: &str = "host-error";
+
+/// Shows a failure that happened after the user's change was already applied,
+/// or outside of any command, in the UI's error slot.
+fn report(app: &AppHandle, result: CommandResult<()>) {
+    if let Err(error) = result {
+        eprintln!("idlehub: {error}");
+        let _ = app.emit(HOST_ERROR_EVENT, error);
+    }
 }
 
 fn load_workspace(data_dir: &Path) -> Workspace {
@@ -113,7 +125,8 @@ fn update(
         storage::commit(&state.data_dir, &mut workspace, change)?;
         view(&workspace)
     };
-    sync(app, state)?;
+    // The change is saved; a webview failing to follow it must not undo that in the UI.
+    report(app, sync(app, state));
     Ok(view)
 }
 
@@ -147,10 +160,11 @@ async fn close_tab(
     let id = parse_id(&id)?;
     let view = update(&app, &state, |ws| ws.remove(id).map(drop).map_err(to_error))?;
     state.applied.lock().unwrap().remove(&id);
+    // The tab is already gone from the workspace; clean up as much as possible.
     if state.opened.lock().unwrap().remove(&id) {
-        host::close(&app, id)?;
+        report(&app, host::close(&app, id));
     }
-    host::tabs_running(&app, view.tabs.len())?;
+    report(&app, host::tabs_running(&app, view.tabs.len()));
     // The browser may still hold the profile for a moment after closing.
     let profile_dir = profile_for(&state.data_dir, id).data_dir;
     std::thread::spawn(move || {
@@ -243,7 +257,8 @@ async fn set_pane_rects(
     rects: Vec<Rect>,
 ) -> CommandResult<()> {
     *state.pane_rects.lock().unwrap() = rects;
-    sync(&app, &state)
+    report(&app, sync(&app, &state));
+    Ok(())
 }
 
 #[tauri::command]

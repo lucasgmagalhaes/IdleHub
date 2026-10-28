@@ -68,7 +68,10 @@ pub fn open(app: &AppHandle, data_dir: &Path, tab: &TabState) -> CommandResult<(
             if let Some(id) = account_id_from_label(webview.label()) {
                 let state = webview.app_handle().state::<AppState>();
                 state.applied.lock().unwrap().remove(&id);
-                let _ = crate::sync(webview.app_handle(), &state);
+                crate::report(
+                    webview.app_handle(),
+                    crate::sync(webview.app_handle(), &state),
+                );
             }
         });
     #[cfg(target_os = "macos")]

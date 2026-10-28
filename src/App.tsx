@@ -52,7 +52,13 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
     void run(() => backend.getTabs());
   }, [backend, run]);
 
-  const reportRects = useCallback((rects: Rect[]) => void backend.setPaneRects(rects).catch(() => {}), [backend]);
+  useEffect(() => backend.onHostError((message) => setError(message)), [backend]);
+
+  // Tabs are opened and placed here, so a failure is worth showing.
+  const reportRects = useCallback(
+    (rects: Rect[]) => void backend.setPaneRects(rects).catch((e) => setError(String(e))),
+    [backend],
+  );
   const visible = view.tabs.filter((tab) => tab.pane !== null).map((tab) => tab.id);
   usePaneRects(grid, `${view.panes}:${visible.join(",")}:${adding}:${settingsOpen}`, reportRects);
   const loadSettings = useCallback(() => backend.getSettings(), [backend]);

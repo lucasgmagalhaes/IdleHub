@@ -15,6 +15,8 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
     cpuCount: 4,
   };
 
+  const hostErrorListeners = new Set<(message: string) => void>();
+
   const view = (): TabsView => ({
     panes: paneCount,
     tabs: tabs.map((t, i) => ({
@@ -73,9 +75,19 @@ export function createFakeBackend(initial: TabInput[] = [], panes = 4, max = 4) 
     reloadTab: vi.fn(async (_id: string) => {}),
     setPaneRects: vi.fn(async () => {}),
     usage: vi.fn(async () => structuredClone(usage)),
+    onHostError: vi.fn((listener: (message: string) => void) => {
+      hostErrorListeners.add(listener);
+      return () => hostErrorListeners.delete(listener);
+    }),
   } satisfies Backend;
 
-  return { backend, usage };
+  return {
+    backend,
+    usage,
+    /** Simulates the host reporting a problem outside of any command. */
+    emitHostError: (message: string) => hostErrorListeners.forEach((listener) => listener(message)),
+    listeners: () => hostErrorListeners.size,
+  };
 }
 
 export function createFakeWindowControls(native = false) {

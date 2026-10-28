@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface RenderPolicy {
@@ -64,7 +65,12 @@ export interface Backend {
   /** Content area of each pane, in pane order, in window coordinates. */
   setPaneRects(rects: Rect[]): Promise<void>;
   usage(): Promise<UsageReport>;
+  /** Problems the host hits outside of a command (a tab failing to load, for example). Returns an unsubscribe. */
+  onHostError(listener: (message: string) => void): () => void;
 }
+
+/** Event the shell emits for errors that no command can return. */
+export const HOST_ERROR_EVENT = "host-error";
 
 export interface WindowControls {
   /** macOS keeps its native traffic lights, so the UI hides its own buttons. */
@@ -87,6 +93,10 @@ export const tauriBackend: Backend = {
   reloadTab: (id) => invoke("reload_tab", { id }),
   setPaneRects: (rects) => invoke("set_pane_rects", { rects }),
   usage: () => invoke("usage_report"),
+  onHostError: (listener) => {
+    const unlisten = listen<string>(HOST_ERROR_EVENT, (event) => listener(event.payload));
+    return () => void unlisten.then((stop) => stop());
+  },
 };
 
 export const tauriWindowControls: WindowControls = {
