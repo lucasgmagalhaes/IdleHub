@@ -33,6 +33,17 @@ impl std::fmt::Display for AccountId {
     }
 }
 
+impl std::str::FromStr for AccountId {
+    type Err = AccountError;
+
+    /// Unknown or malformed ids are reported as a missing account.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s)
+            .map(Self)
+            .map_err(|_| AccountError::NotFound)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
@@ -146,6 +157,13 @@ impl AccountStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_id_parses_from_its_display_form() {
+        let id = AccountId::new();
+        assert_eq!(id.to_string().parse::<AccountId>(), Ok(id));
+        assert_eq!("nope".parse::<AccountId>(), Err(AccountError::NotFound));
+    }
 
     #[test]
     fn new_store_is_empty() {
