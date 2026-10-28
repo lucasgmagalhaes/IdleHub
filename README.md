@@ -23,13 +23,19 @@ Every game page gets a small injected runtime (`inject/`, ~3 KB) that:
 | Keep visible / focused | The game never pauses or disconnects because it thinks it is hidden |
 | Audio mute | Only the focused account plays sound; Web Audio is suspended |
 
-Measured with `pnpm bench` (4 accounts of a synthetic canvas game, headless Chromium):
+Measured with `pnpm bench` (4 accounts of a synthetic canvas game, headless
+Chromium; CPU of all browser processes and of the pages' main threads):
 
-| Scenario | Main-thread CPU | Saving | FPS per account |
+| Scenario | All processes | Main thread | FPS per tab |
 |---|---|---|---|
-| No IdleHub runtime | ~850–980 ms/s | – | 60/60/60/60 |
-| Grid (20 fps each) | ~260–290 ms/s | 65–74% | 20/20/20/20 |
-| One focused (60 fps), others 5 fps | ~230–245 ms/s | 71–77% | 60/5/5/5 |
+| No IdleHub runtime | ~95% CPU | ~760 ms/s | 60/60/60/60 |
+| Runtime installed, nothing capped | ~95% (±2%: no overhead) | ~745 ms/s | 60/60/60/60 |
+| 4 panes (30 fps each) | ~63% (**−33%**) | ~400 ms/s (**−47%**) | 30/30/30/30 |
+| 1 pane (60 fps) + 3 hidden (5 fps) | ~35% (**−63%**) | ~225 ms/s (**−70%**) | 60/5/5/5 |
+
+`pnpm bench:app` runs the real desktop app (Linux/WebKitGTK) the same way and
+checks that every tab renders at its policy's cap end to end (measured: 30/30/30/30
+and 60/5/5/5) and that hiding tabs lowers the app's CPU (−28%).
 
 Game timers (server ticks) keep running at full speed in every scenario.
 
