@@ -93,6 +93,26 @@ pub fn usage_report(
     report
 }
 
+/// Pids of `root` and all its descendants, so a sampler can refresh only those.
+pub fn tree_pids(snapshot: &[ProcessSample], root: u32) -> Vec<u32> {
+    if !snapshot.iter().any(|p| p.pid == root) {
+        return Vec::new();
+    }
+    let mut pids = vec![root];
+    let mut seen: HashSet<u32> = pids.iter().copied().collect();
+    let mut i = 0;
+    while i < pids.len() {
+        let parent = pids[i];
+        for child in snapshot.iter().filter(|p| p.parent == Some(parent)) {
+            if seen.insert(child.pid) {
+                pids.push(child.pid);
+            }
+        }
+        i += 1;
+    }
+    pids
+}
+
 fn owner_of(command: &str, profiles: &[(AccountId, String)]) -> Option<AccountId> {
     profiles
         .iter()
@@ -227,6 +247,21 @@ mod tests {
         assert_eq!(json["systemMemoryBytes"], 8);
         assert_eq!(json["cpuCount"], 4);
         assert_eq!(json["total"]["memoryBytes"], 0);
+    }
+
+    #[test]
+    fn tree_pids_lists_the_root_and_its_descendants_only() {
+        let snapshot = vec![
+            process(1, None, "init", 0.0, 0),
+            process(10, Some(1), "idlehub", 0.0, 0),
+            process(11, Some(10), "web", 0.0, 0),
+            process(12, Some(11), "web child", 0.0, 0),
+            process(20, Some(1), "other", 0.0, 0),
+        ];
+        let mut pids = tree_pids(&snapshot, 10);
+        pids.sort();
+        assert_eq!(pids, vec![10, 11, 12]);
+        assert!(tree_pids(&snapshot, 99).is_empty());
     }
 
     #[test]
