@@ -7,10 +7,12 @@ const TICKS_PER_SECOND = 100; // USER_HZ on Linux
 function readStat(pid) {
   try {
     const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const name = raw.slice(raw.indexOf("(") + 1, raw.lastIndexOf(")"));
     // The command name may contain spaces; fields after it are space separated.
     const fields = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
     return {
       pid,
+      name,
       ppid: Number(fields[1]),
       cpuTicks: Number(fields[11]) + Number(fields[12]),
       rssPages: Number(fields[21]),
@@ -53,4 +55,9 @@ export function treeUsage(root) {
     rssBytes: tree.reduce((sum, p) => sum + p.rssPages * pageSize, 0),
     processes: tree.length,
   };
+}
+
+/** Per-process CPU seconds and memory of a tree, keyed by pid. */
+export function treeProcesses(root) {
+  return new Map(processTree(root).map((p) => [p.pid, { ...p, cpuSeconds: p.cpuTicks / TICKS_PER_SECOND }]));
 }

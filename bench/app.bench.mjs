@@ -14,14 +14,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { startFixtureServer } from "./lib/fixture-server.mjs";
-import { treeUsage } from "./lib/proc.mjs";
+import { treeProcesses, treeUsage } from "./lib/proc.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const binary = process.env.IDLEHUB_BIN ?? join(root, "target/debug/idlehub");
 const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 10000);
 const ACCOUNTS = 4;
 // Mirrors `PolicySettings::default()` in crates/idlehub-core/src/policy.rs.
-const POLICY = { singlePane: 60, multiPane: 30, hidden: 5 };
+const POLICY = { singlePane: 60, multiPane: 30, hidden: 1 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -33,10 +33,10 @@ async function withDisplay() {
   return { display, stop: () => xvfb.kill() };
 }
 
-function writeWorkspace(dataHome, port, panes) {
+function writeWorkspace(dataHome, port, panes, count) {
   const dir = join(dataHome, "com.lucasgmagalhaes.idlehub");
   mkdirSync(dir, { recursive: true });
-  const accounts = Array.from({ length: ACCOUNTS }, (_, i) => ({
+  const accounts = Array.from({ length: count }, (_, i) => ({
     id: randomUUID(),
     label: `Tab ${i + 1}`,
     url: `http://127.0.0.1:${port}/game.html?sprites=300&report=1&tab=${i}`,
@@ -55,23 +55,49 @@ async function waitFor(condition, timeoutMs, what) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * Groups per-process CPU by role. WebKitGTK starts one web process per webview,
+ * in creation order: the UI first, then the game tabs.
+ */
+function breakdown(before, after, seconds) {
+  const roles = {};
+  const add = (role, cpu, rss) => {
+    roles[role] ??= { cpuPercent: 0, rssMb: 0, processes: 0 };
+    roles[role].cpuPercent += cpu;
+    roles[role].rssMb += rss;
+    roles[role].processes += 1;
+  };
+  const web = [...after.values()].filter((p) => p.name.startsWith("WebKitWebProces")).sort((a, b) => a.pid - b.pid);
+  for (const p of after.values()) {
+    const cpu = ((p.cpuSeconds - (before.get(p.pid)?.cpuSeconds ?? p.cpuSeconds)) / seconds) * 100;
+    const rss = (p.rssPages * 4096) / 1024 / 1024;
+    if (p.name.startsWith("WebKitNetwork")) add("network processes", cpu, rss);
+    else if (p.name.startsWith("WebKitWebProces")) add(p === web[0] ? "ui web process" : `tab web process ${web.indexOf(p)}`, cpu, rss);
+    else if (p.name === "idlehub") add("app process", cpu, rss);
+    else add(`other (${p.name})`, cpu, rss);
+  }
+  return roles;
+}
+
 async function runScenario(server, display, scenario) {
   const dataHome = mkdtempSync(join(tmpdir(), "idlehub-bench-"));
-  writeWorkspace(dataHome, server.port, scenario.panes);
+  writeWorkspace(dataHome, server.port, scenario.panes, scenario.tabs);
   const app = spawn(binary, [], {
     env: { ...process.env, DISPLAY: display, XDG_DATA_HOME: dataHome, WEBKIT_DISABLE_COMPOSITING_MODE: "1" },
     stdio: "ignore",
   });
   try {
-    await waitFor(() => server.snapshot().size === ACCOUNTS, 60000, "all tabs to report");
+    await waitFor(() => server.snapshot().size === scenario.tabs, 60000, "all tabs to report");
     await sleep(4000); // warm-up
     const before = server.snapshot();
     const usageBefore = treeUsage(app.pid);
+    const processesBefore = treeProcesses(app.pid);
     await sleep(MEASURE_MS);
     const usageAfter = treeUsage(app.pid);
+    const processesAfter = treeProcesses(app.pid);
     const after = server.snapshot();
 
-    const tabs = [...Array(ACCOUNTS).keys()].map((i) => {
+    const tabs = [...Array(scenario.tabs).keys()].map((i) => {
       const a = before.get(String(i));
       const b = after.get(String(i));
       const seconds = (b.at - a.at) / 1000;
@@ -83,6 +109,7 @@ async function runScenario(server, display, scenario) {
       cpuPercent: ((usageAfter.cpuSeconds - usageBefore.cpuSeconds) / (MEASURE_MS / 1000)) * 100,
       rssMb: usageAfter.rssBytes / 1024 / 1024,
       processes: usageAfter.processes,
+      roles: breakdown(processesBefore, processesAfter, MEASURE_MS / 1000),
     };
   } finally {
     app.kill("SIGTERM");
@@ -93,20 +120,26 @@ async function runScenario(server, display, scenario) {
 }
 
 const scenarios = [
-  { name: "fourPanes", label: "4 panes", panes: 4, expected: Array(ACCOUNTS).fill(POLICY.multiPane) },
+  { name: "empty", label: "no tabs", panes: 4, tabs: 0, expected: [] },
+  { name: "fourPanes", label: "4 panes", panes: 4, tabs: ACCOUNTS, expected: Array(ACCOUNTS).fill(POLICY.multiPane) },
   {
     name: "onePane",
     label: "1 pane + 3 hidden",
     panes: 1,
+    tabs: ACCOUNTS,
     expected: [POLICY.singlePane, ...Array(ACCOUNTS - 1).fill(POLICY.hidden)],
   },
 ];
+
+// BENCH_SCENARIOS=empty,onePane runs a subset (checks then only cover what ran).
+const only = process.env.BENCH_SCENARIOS?.split(",");
+const selected = only ? scenarios.filter((s) => only.includes(s.name)) : scenarios;
 
 const server = await startFixtureServer(join(root, "bench/fixtures"));
 const screen = await withDisplay();
 const results = [];
 try {
-  for (const scenario of scenarios) results.push(await runScenario(server, screen.display, scenario));
+  for (const scenario of selected) results.push(await runScenario(server, screen.display, scenario));
 } finally {
   screen.stop();
   await server.close();
@@ -119,6 +152,9 @@ for (const r of results) {
       `${String(r.processes).padStart(2)} processes  fps ${r.tabs.map((t) => t.fps.toFixed(1)).join("/")}` +
       ` (expected ${r.expected.join("/")})  ticks/s ${r.tabs.map((t) => t.ticksPerSec.toFixed(1)).join("/")}`,
   );
+  for (const [role, u] of Object.entries(r.roles).sort()) {
+    console.log(`    ${role.padEnd(22)} ${u.cpuPercent.toFixed(1).padStart(5)}% cpu  ${u.rssMb.toFixed(0).padStart(5)} MB  (${u.processes})`);
+  }
 }
 mkdirSync(join(root, "bench/results"), { recursive: true });
 writeFileSync(join(root, "bench/results/app.json"), JSON.stringify(results, null, 2));
@@ -135,11 +171,13 @@ for (const r of results) {
     check(tab.ticksPerSec >= 3.5, `${r.name}: tab ${i + 1} game timers slowed to ${tab.ticksPerSec.toFixed(1)}/s`);
   });
 }
-const [four, one] = results;
-check(one.cpuPercent < four.cpuPercent, "hiding tabs did not reduce CPU");
+const named = Object.fromEntries(results.map((r) => [r.name, r]));
+const { fourPanes: four, onePane: one } = named;
+if (four && one) check(one.cpuPercent < four.cpuPercent, "hiding tabs did not reduce CPU");
 
 if (failures.length) {
   console.error(`\n✗ ${failures.join("\n✗ ")}`);
   process.exit(1);
 }
-console.log(`\n✓ all checks passed; 1 pane + 3 hidden uses ${(100 - (one.cpuPercent / four.cpuPercent) * 100).toFixed(0)}% less CPU than 4 panes`);
+console.log("\n✓ all checks passed");
+if (four && one) console.log(`  1 pane + 3 hidden uses ${(100 - (one.cpuPercent / four.cpuPercent) * 100).toFixed(0)}% less CPU than 4 panes`);
