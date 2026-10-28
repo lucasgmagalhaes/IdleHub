@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use idlehub_core::account::{AccountId, AccountStore};
 use idlehub_core::layout::{PaneCount, Rect};
 use idlehub_core::metrics::{self, UsageReport};
-use idlehub_core::policy::RenderPolicy;
+use idlehub_core::policy::{PolicySettings, RenderPolicy};
 use idlehub_core::profile::profile_for;
 use idlehub_core::workspace::{TabState, Workspace};
 use serde::Serialize;
@@ -221,6 +221,23 @@ async fn set_pinned(
 }
 
 #[tauri::command]
+async fn get_settings(state: State<'_, AppState>) -> CommandResult<PolicySettings> {
+    Ok(state.workspace.lock().unwrap().policy())
+}
+
+#[tauri::command]
+async fn set_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: PolicySettings,
+) -> CommandResult<TabsView> {
+    update(&app, &state, |ws| {
+        ws.set_policy(settings);
+        Ok(())
+    })
+}
+
+#[tauri::command]
 async fn reload_tab(app: AppHandle, id: String) -> CommandResult<()> {
     host::reload(&app, parse_id(&id)?)
 }
@@ -290,6 +307,8 @@ pub fn run() {
             show_in_pane,
             set_muted,
             set_pinned,
+            get_settings,
+            set_settings,
             reload_tab,
             set_pane_rects,
             usage_report,
