@@ -75,6 +75,8 @@ pub enum AccountError {
     NotFound,
     #[error("pinned tabs must be unpinned first")]
     Pinned,
+    #[error("pane {0} does not exist in the current layout")]
+    InvalidPane(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

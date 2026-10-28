@@ -1,8 +1,8 @@
-//! Decides how much each account may render, based on what the user is looking at.
+//! Decides how much each tab may render and whether it may play audio.
 
 use serde::{Deserialize, Serialize};
 
-use crate::layout::ViewMode;
+use crate::layout::PaneCount;
 
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 120;
@@ -18,48 +18,46 @@ pub struct RenderPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicySettings {
-    /// Frame cap of the focused account.
-    pub focused_fps: u32,
-    /// Frame cap of every account while the grid is shown.
-    pub grid_fps: u32,
-    /// Frame cap of the accounts in the side rail while another one is focused.
-    pub background_fps: u32,
+    /// Frame cap when a single pane fills the window.
+    pub single_pane_fps: u32,
+    /// Frame cap of each visible tab when the window is split.
+    pub multi_pane_fps: u32,
+    /// Frame cap of tabs that are running but not shown in any pane.
+    pub hidden_fps: u32,
 }
 
 impl Default for PolicySettings {
     fn default() -> Self {
         Self {
-            focused_fps: 60,
-            grid_fps: 20,
-            background_fps: 5,
+            single_pane_fps: 60,
+            multi_pane_fps: 30,
+            hidden_fps: 5,
         }
     }
 }
 
-/// Returns one policy per account, in account order.
-///
-/// Only the focused account plays audio; in grid mode every account is muted.
-pub fn policies(count: usize, mode: ViewMode, settings: PolicySettings) -> Vec<RenderPolicy> {
-    let focused = match mode {
-        ViewMode::Focused(index) if index < count => Some(index),
-        _ => None,
+/// Policy of one tab. `user_muted` is the tab's speaker toggle; hidden tabs are always muted.
+pub fn tab_policy(
+    visible: bool,
+    panes: PaneCount,
+    user_muted: bool,
+    settings: PolicySettings,
+) -> RenderPolicy {
+    if !visible {
+        return RenderPolicy {
+            max_fps: clamp_fps(settings.hidden_fps),
+            muted: true,
+        };
+    }
+    let fps = if panes.get() == 1 {
+        settings.single_pane_fps
+    } else {
+        settings.multi_pane_fps
     };
-    (0..count)
-        .map(|i| match focused {
-            Some(f) if f == i => RenderPolicy {
-                max_fps: clamp_fps(settings.focused_fps),
-                muted: false,
-            },
-            Some(_) => RenderPolicy {
-                max_fps: clamp_fps(settings.background_fps),
-                muted: true,
-            },
-            None => RenderPolicy {
-                max_fps: clamp_fps(settings.grid_fps),
-                muted: true,
-            },
-        })
-        .collect()
+    RenderPolicy {
+        max_fps: clamp_fps(fps),
+        muted: user_muted,
+    }
 }
 
 fn clamp_fps(fps: u32) -> u32 {
@@ -71,66 +69,63 @@ mod tests {
     use super::*;
 
     const SETTINGS: PolicySettings = PolicySettings {
-        focused_fps: 60,
-        grid_fps: 20,
-        background_fps: 5,
+        single_pane_fps: 60,
+        multi_pane_fps: 30,
+        hidden_fps: 5,
     };
 
+    fn panes(n: u8) -> PaneCount {
+        PaneCount::new(n).unwrap()
+    }
+
     #[test]
-    fn grid_mode_caps_everyone_at_grid_fps_and_mutes_all() {
+    fn single_visible_pane_renders_at_full_rate() {
         assert_eq!(
-            policies(4, ViewMode::Grid, SETTINGS),
-            vec![
-                RenderPolicy {
-                    max_fps: 20,
-                    muted: true
-                };
-                4
-            ]
+            tab_policy(true, panes(1), false, SETTINGS),
+            RenderPolicy {
+                max_fps: 60,
+                muted: false
+            }
         );
     }
 
     #[test]
-    fn focused_account_renders_fast_with_audio_and_others_throttle() {
-        let result = policies(3, ViewMode::Focused(2), SETTINGS);
-        assert_eq!(
-            result,
-            vec![
-                RenderPolicy {
-                    max_fps: 5,
-                    muted: true
-                },
-                RenderPolicy {
-                    max_fps: 5,
-                    muted: true
-                },
-                RenderPolicy {
-                    max_fps: 60,
-                    muted: false
-                },
-            ]
-        );
+    fn split_panes_render_at_the_multi_pane_rate() {
+        for n in 2..=4 {
+            assert_eq!(tab_policy(true, panes(n), false, SETTINGS).max_fps, 30);
+        }
     }
 
     #[test]
-    fn unknown_focus_behaves_like_grid() {
+    fn visible_tabs_follow_the_user_mute_toggle() {
+        assert!(tab_policy(true, panes(4), true, SETTINGS).muted);
+        assert!(!tab_policy(true, panes(4), false, SETTINGS).muted);
+    }
+
+    #[test]
+    fn hidden_tabs_keep_running_slowly_and_silently() {
         assert_eq!(
-            policies(2, ViewMode::Focused(7), SETTINGS),
-            policies(2, ViewMode::Grid, SETTINGS)
+            tab_policy(false, panes(1), false, SETTINGS),
+            RenderPolicy {
+                max_fps: 5,
+                muted: true
+            }
         );
     }
 
     #[test]
     fn fps_is_clamped_to_supported_range() {
         let settings = PolicySettings {
-            focused_fps: 1000,
-            grid_fps: 0,
-            background_fps: 0,
+            single_pane_fps: 1000,
+            multi_pane_fps: 0,
+            hidden_fps: 0,
         };
-        assert_eq!(policies(1, ViewMode::Grid, settings)[0].max_fps, MIN_FPS);
-        let focused = policies(2, ViewMode::Focused(0), settings);
-        assert_eq!(focused[0].max_fps, MAX_FPS);
-        assert_eq!(focused[1].max_fps, MIN_FPS);
+        assert_eq!(tab_policy(true, panes(1), false, settings).max_fps, MAX_FPS);
+        assert_eq!(tab_policy(true, panes(2), false, settings).max_fps, MIN_FPS);
+        assert_eq!(
+            tab_policy(false, panes(2), false, settings).max_fps,
+            MIN_FPS
+        );
     }
 
     #[test]
