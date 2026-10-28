@@ -4,9 +4,9 @@ import type { Backend, Tab, TabsView, UsageReport, WindowControls } from "./back
  * In-browser stand-in for the Tauri host, used by `pnpm dev` outside the app
  * shell to work on the UI. Game webviews are not available here.
  */
-export function createDemoBackend(): Backend {
+export function createDemoBackend(initialPanes = 4): Backend {
   let nextId = 1;
-  let panes = 4;
+  let panes = initialPanes;
   let tabs: Omit<Tab, "pane" | "policy">[] = [
     ["Cookie Clicker", "https://orteil.dashnet.org/cookieclicker/", true],
     ["Melvor Idle", "https://melvoridle.com", false],

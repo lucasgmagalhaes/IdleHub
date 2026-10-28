@@ -401,3 +401,102 @@ button.primary:hover {
 .status-memory .meter-track {
   width: 160px;
 }
+
+/* Phones: one pane, compact top bar, tab bar at the bottom */
+
+.top-bar.compact {
+  height: auto;
+  min-height: 52px;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+}
+
+.top-bar.compact .brand {
+  font-size: 20px;
+  margin-right: auto;
+}
+
+.top-bar.compact .new-tab {
+  order: 2;
+  padding: 8px;
+}
+
+.top-bar.compact .meter {
+  width: auto;
+  min-width: 96px;
+  white-space: nowrap;
+  border-left: 0;
+  padding-left: 0;
+}
+
+.top-bar.compact .spacer {
+  display: none;
+}
+
+.top-bar.compact .new-tab-form {
+  order: 3;
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.top-bar.compact .new-tab-form input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  /* 16px keeps iOS from zooming into the field. */
+  font-size: 16px;
+}
+
+.top-bar.compact .error {
+  order: 4;
+  flex-basis: 100%;
+  white-space: normal;
+}
+
+.app.mobile .pane-grid {
+  padding: 0;
+}
+
+.app.mobile .pane {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.app.mobile .pane-url {
+  display: none;
+}
+
+.app.mobile .pane-title {
+  max-width: 55%;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  flex-shrink: 0;
+}
+
+.tab-bar button {
+  flex: 1 0 84px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 4px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.tab-bar button[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.tab-bar-label {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

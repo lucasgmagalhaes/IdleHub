@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Backend, Rect, Tab, TabsView, WindowControls } from "./backend";
 import { Pane } from "./components/Pane";
 import { StatusBar } from "./components/StatusBar";
+import { TabBar } from "./components/TabBar";
 import { TopBar } from "./components/TopBar";
 import { usePaneRects } from "./hooks/usePaneRects";
 import { useUsage } from "./hooks/useUsage";
@@ -11,9 +12,12 @@ import "./App.css";
 interface AppProps {
   backend: Backend;
   windowControls: WindowControls;
+  /** Phones show one pane and a bottom tab bar. */
+  layout?: "desktop" | "mobile";
 }
 
-export function App({ backend, windowControls }: AppProps) {
+export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
+  const mobile = layout === "mobile";
   const [view, setView] = useState<TabsView>({ tabs: [], panes: 4 });
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,8 +58,9 @@ export function App({ backend, windowControls }: AppProps) {
   const tabInPane = (pane: number) => view.tabs.find((tab) => tab.pane === pane);
 
   return (
-    <div className="app">
+    <div className={`app ${mobile ? "mobile" : ""}`}>
       <TopBar
+        compact={mobile}
         panes={view.panes}
         usage={usage}
         adding={adding}
@@ -85,7 +90,11 @@ export function App({ backend, windowControls }: AppProps) {
           />
         ))}
       </main>
-      <StatusBar tabCount={view.tabs.length} usage={usage} />
+      {mobile ? (
+        <TabBar tabs={view.tabs} onSelect={(id) => void run(() => backend.showInPane(0, id))} />
+      ) : (
+        <StatusBar tabCount={view.tabs.length} usage={usage} />
+      )}
     </div>
   );
 }

@@ -79,7 +79,7 @@ export const tauriBackend: Backend = {
 };
 
 export const tauriWindowControls: WindowControls = {
-  native: navigator.userAgent.includes("Mac"),
+  native: /Mac|iPhone|iPad|Android/.test(navigator.userAgent),
   minimize: () => getCurrentWindow().minimize(),
   toggleMaximize: () => getCurrentWindow().toggleMaximize(),
   close: () => getCurrentWindow().close(),
