@@ -29,6 +29,22 @@ CPU is roughly linear in frames drawn, with a ~1.3% floor (the game's own timers
 | UI webview | ~1% | ~1% |
 | Idle app (no tabs) | ~1.2% total | |
 
+## Windows (CI runner, `pnpm bench:app`)
+
+All accounts share one WebView2 browser, each in its own WebView2 profile
+(run 40718364785, 10 s window, debug build, 4 accounts):
+
+| Scenario | CPU | Private memory | Processes | fps per tab | Game timers |
+|---|---|---|---|---|---|
+| No tabs | 1% | 109 MB | 7 | – | – |
+| 4 panes | 20% | 366 MB | 16 | 30/30/30/30 | 4.0/s each |
+| 1 pane + 3 hidden | 6% | 336 MB | 16 | 60/1/1/1 | 4.0/s each |
+
+With 4 panes, the renderers use 12% CPU and the GPU process 6.6%. Hiding
+3 tabs cuts CPU by 70% while their timers keep their pace. The comparison
+with one browser per account (`IDLEHUB_WEBVIEW2_SEPARATE=1`) timed out on
+that run; the benchmark now waits longer for it.
+
 ## Optimizations
 
 | Change | Before | After |
@@ -41,11 +57,8 @@ CPU is roughly linear in frames drawn, with a ~1.3% floor (the game's own timers
 
 ## Not done yet / ideas
 
-- **Windows memory:** each account currently uses its own WebView2 user data
-  folder, which starts a full browser process tree per account. WebView2
-  profiles (`ProfileName`) share one browser process between profiles and
-  should cut memory substantially; needs support in Tauri/wry and a Windows
-  measurement.
+- **Windows memory:** the shared browser is measured above; the number for
+  one browser per account, to show the saving, is still missing.
 - **4-pane frame rate:** 20 fps instead of 30 would save ~18% per visible tab
   (see the sweep). Kept at 30 for smoothness; a good candidate for a setting.
 - **Mobile:** CPU has not been measured on devices yet; the emulator tests only
