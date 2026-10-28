@@ -110,9 +110,17 @@ async function runScenario(server, display, scenario) {
   const env = { ...process.env, ...scenario.env, WEBKIT_DISABLE_COMPOSITING_MODE: "1" };
   if (display) env.DISPLAY = display;
   if (dataHome) env.XDG_DATA_HOME = dataHome;
-  const app = spawn(binary, [], { env, stdio: "ignore" });
+  const app = spawn(binary, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+  // The app's own log is the only clue when tabs never load; keep its tail.
+  let output = "";
+  const keep = (chunk) => (output = (output + chunk).slice(-4000));
+  app.stdout.on("data", keep);
+  app.stderr.on("data", keep);
   try {
-    await waitFor(() => server.snapshot().size === scenario.tabs, 60000, "all tabs to report");
+    await waitFor(() => server.snapshot().size === scenario.tabs, 60000, "all tabs to report").catch((error) => {
+      const reported = [...server.snapshot().keys()].join(", ") || "none";
+      throw new Error(`${error.message} (reported: ${reported}; app exit code: ${app.exitCode})\napp output:\n${output || "(none)"}`);
+    });
     await sleep(4000); // warm-up
     const before = server.snapshot();
     const usageBefore = treeUsage(app.pid);
@@ -146,6 +154,15 @@ async function runScenario(server, display, scenario) {
 }
 
 const scenarios = [
+  { name: "empty", label: "no tabs", panes: 4, tabs: 0, expected: [] },
+  { name: "fourPanes", label: "4 panes", panes: 4, tabs: ACCOUNTS, expected: Array(ACCOUNTS).fill(POLICY.multiPane) },
+  {
+    name: "onePane",
+    label: "1 pane + 3 hidden",
+    panes: 1,
+    tabs: ACCOUNTS,
+    expected: [POLICY.singlePane, ...Array(ACCOUNTS - 1).fill(POLICY.hidden)],
+  },
   ...(windows
     ? [
         {
@@ -158,15 +175,6 @@ const scenarios = [
         },
       ]
     : []),
-  { name: "empty", label: "no tabs", panes: 4, tabs: 0, expected: [] },
-  { name: "fourPanes", label: "4 panes", panes: 4, tabs: ACCOUNTS, expected: Array(ACCOUNTS).fill(POLICY.multiPane) },
-  {
-    name: "onePane",
-    label: "1 pane + 3 hidden",
-    panes: 1,
-    tabs: ACCOUNTS,
-    expected: [POLICY.singlePane, ...Array(ACCOUNTS - 1).fill(POLICY.hidden)],
-  },
 ];
 
 // BENCH_SCENARIOS=empty,onePane runs a subset (checks then only cover what ran).
@@ -176,8 +184,17 @@ const selected = only ? scenarios.filter((s) => only.includes(s.name)) : scenari
 const server = await startFixtureServer(join(root, "bench/fixtures"));
 const screen = await withDisplay();
 const results = [];
+// One broken scenario must not hide the numbers of the others.
+const crashed = [];
 try {
-  for (const scenario of selected) results.push(await runScenario(server, screen.display, scenario));
+  for (const scenario of selected) {
+    try {
+      results.push(await runScenario(server, screen.display, scenario));
+    } catch (error) {
+      console.error(`\n${scenario.name} failed: ${error.message}`);
+      crashed.push(`${scenario.name}: ${error.message.split("\n")[0]}`);
+    }
+  }
 } finally {
   screen.stop();
   await server.close();
@@ -198,7 +215,7 @@ for (const r of results) {
 mkdirSync(join(root, "bench/results"), { recursive: true });
 writeFileSync(join(root, "bench/results/app.json"), JSON.stringify(results, null, 2));
 
-const failures = [];
+const failures = [...crashed];
 const check = (ok, message) => ok || failures.push(message);
 for (const r of results) {
   r.tabs.forEach((tab, i) => {
