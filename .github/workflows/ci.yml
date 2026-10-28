@@ -129,25 +129,6 @@ jobs:
           name: windows-bench-results
           path: bench/results/
 
-  macos:
-    name: macOS build
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm tauri build --debug --no-bundle
-
   android:
     name: Android
     needs: changes
@@ -204,8 +185,10 @@ jobs:
             src-tauri/gen/android/app/build/outputs/apk/
             src-tauri/gen/android/**/build/reports/
 
-  ios:
-    name: iOS
+  # macOS and iOS share one job: macOS runners are scarce, and two jobs waited
+  # for two of them (iOS once sat queued for 15 minutes and was cancelled).
+  apple:
+    name: macOS & iOS
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
@@ -234,6 +217,10 @@ jobs:
           device=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [^(]*[^ (]')
           echo "Testing on $device"
           xcodebuild test -scheme tauri-plugin-tabs -destination "platform=iOS Simulator,name=$device" | tail -120
+      # Runs even when the iOS steps failed, so one platform never hides the other.
+      - name: macOS desktop build
+        if: ${{ !cancelled() && needs.changes.outputs.app == 'true' }}
+        run: pnpm tauri build --debug --no-bundle
       - name: Build the app bundle (exploratory, on demand)
         if: github.event_name == 'workflow_dispatch' && inputs.ios-bundle
         continue-on-error: true
