@@ -55,12 +55,12 @@ function stopTree(app) {
   }
 }
 
-function writeWorkspace(dir, port, panes, count) {
+function writeWorkspace(dir, port, panes, count, run) {
   mkdirSync(dir, { recursive: true });
   const accounts = Array.from({ length: count }, (_, i) => ({
     id: randomUUID(),
     label: `Tab ${i + 1}`,
-    url: `http://127.0.0.1:${port}/game.html?sprites=300&report=1&tab=${i}`,
+    url: `http://127.0.0.1:${port}/game.html?sprites=300&report=1&tab=${run}-${i}`,
     muted: true,
     pinned: false,
   }));
@@ -104,7 +104,9 @@ function breakdown(before, after, seconds) {
 async function runScenario(server, display, scenario) {
   const { dataHome, dir } = appDataDir();
   rmSync(dir, { recursive: true, force: true });
-  writeWorkspace(dir, server.port, scenario.panes, scenario.tabs);
+  // Tab ids carry the scenario name so a report from an earlier run can never count.
+  server.reset();
+  writeWorkspace(dir, server.port, scenario.panes, scenario.tabs, scenario.name);
   const env = { ...process.env, ...scenario.env, WEBKIT_DISABLE_COMPOSITING_MODE: "1" };
   if (display) env.DISPLAY = display;
   if (dataHome) env.XDG_DATA_HOME = dataHome;
@@ -121,8 +123,8 @@ async function runScenario(server, display, scenario) {
     const after = server.snapshot();
 
     const tabs = [...Array(scenario.tabs).keys()].map((i) => {
-      const a = before.get(String(i));
-      const b = after.get(String(i));
+      const a = before.get(`${scenario.name}-${i}`);
+      const b = after.get(`${scenario.name}-${i}`);
       const seconds = (b.at - a.at) / 1000;
       return { fps: (b.frames - a.frames) / seconds, ticksPerSec: (b.ticks - a.ticks) / seconds };
     });

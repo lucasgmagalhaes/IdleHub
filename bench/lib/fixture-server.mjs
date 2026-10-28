@@ -30,6 +30,8 @@ export async function startFixtureServer(root) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     port: server.address().port,
+    /** Forgets earlier reports, so a new run never reads stale ones. */
+    reset: () => latest.clear(),
     /** Copy of the latest report of every tab. */
     snapshot: () => new Map([...latest].map(([tab, report]) => [tab, { ...report }])),
     close: () => new Promise((resolve) => server.close(resolve)),
