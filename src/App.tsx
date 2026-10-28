@@ -25,13 +25,22 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const usage = useUsage(backend);
   const grid = useRef<HTMLElement>(null);
+  const issued = useRef(0);
+  const shown = useRef(0);
 
-  /** Runs a command that returns the new tabs view; reports failures in the top bar. */
+  /**
+   * Runs a command that returns the new tabs view; reports failures in the top bar.
+   * Commands can finish out of order, so a view older than the one on screen is dropped.
+   */
   const run = useCallback(async (command: () => Promise<TabsView | void>) => {
+    const seq = ++issued.current;
     try {
       setError(null);
       const next = await command();
-      if (next) setView(next);
+      if (next && seq > shown.current) {
+        shown.current = seq;
+        setView(next);
+      }
       return true;
     } catch (e) {
       setError(String(e));

@@ -20,6 +20,21 @@ function setup(tabs = [cookie, melvor, farmer, slayer], panes = 4, native = fals
 const panes = () => screen.queryAllByRole("region", { name: /^Painel/ });
 
 describe("App", () => {
+  it("ignores a slow response that a newer one already replaced", async () => {
+    const { backend, user } = setup();
+    await screen.findAllByRole("region", { name: /^Painel/ });
+    let finishSlow: () => void = () => {};
+    const stale = await backend.setPanes(1);
+    backend.setPanes.mockImplementationOnce(() => new Promise((resolve) => (finishSlow = () => resolve(stale))));
+
+    await user.click(screen.getByRole("button", { name: "1 painel" }));
+    await user.click(screen.getByRole("button", { name: "3 painéis" }));
+    expect(panes()).toHaveLength(3);
+    await act(async () => finishSlow());
+
+    expect(panes()).toHaveLength(3);
+  });
+
   describe("top bar", () => {
     it("shows the brand and the layout picker with the current layout selected", async () => {
       setup();
