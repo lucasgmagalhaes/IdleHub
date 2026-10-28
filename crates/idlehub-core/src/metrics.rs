@@ -218,7 +218,11 @@ mod tests {
 
     #[test]
     fn report_serializes_in_camel_case_for_the_ui() {
-        let report = UsageReport { system_memory_bytes: 8, cpu_count: 4, ..UsageReport::default() };
+        let report = UsageReport {
+            system_memory_bytes: 8,
+            cpu_count: 4,
+            ..UsageReport::default()
+        };
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["systemMemoryBytes"], 8);
         assert_eq!(json["cpuCount"], 4);
