@@ -51,6 +51,33 @@ jobs:
           name: bench-results
           path: bench/results/
 
+  desktop-e2e:
+    name: Desktop end-to-end benchmark (Linux)
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system dependencies and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev xvfb
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm bench:app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-e2e-results
+          path: bench/results/
+
   build:
     name: Build (${{ matrix.os }})
     needs: test
