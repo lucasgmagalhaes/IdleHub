@@ -20,6 +20,7 @@ interface TopBarProps {
   onCancelAdding(): void;
   onAdd(label: string, url: string | undefined): Promise<boolean>;
   onOpenSettings(): void;
+  onDismissError(): void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -70,9 +71,12 @@ export function TopBar(props: TopBarProps) {
       )}
 
       {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
+        <div className="error error-banner" title={error}>
+          <p role="alert">{error}</p>
+          <button type="button" className="icon-button" aria-label={t.dismissError} onClick={props.onDismissError}>
+            <X size={14} />
+          </button>
+        </div>
       )}
 
       <div className="spacer" data-tauri-drag-region />

@@ -53,6 +53,16 @@ describe("App", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("main window is gone");
     });
 
+    it("lets the user dismiss an error", async () => {
+      const { emitHostError, user } = setup();
+      await screen.findAllByRole("region", { name: /^Painel/ });
+      act(() => emitHostError("boom"));
+
+      await user.click(screen.getByRole("button", { name: "Dispensar erro" }));
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
     it("stops listening when closed", async () => {
       const { emitHostError, listeners } = setup();
       await screen.findAllByRole("region", { name: /^Painel/ });
@@ -133,6 +143,21 @@ describe("App", () => {
       await user.click(within(await screen.findByRole("banner")).getByRole("button", { name: "Nova aba" }));
       await user.keyboard("{Escape}");
       expect(screen.queryByLabelText("Nome da aba")).not.toBeInTheDocument();
+    });
+
+    it("submits once while the tab is being opened", async () => {
+      const { backend, user } = setup([]);
+      let finish: () => void = () => {};
+      backend.addTab.mockImplementationOnce(
+        () => new Promise((resolve) => (finish = () => resolve({ tabs: [], panes: 4 }))),
+      );
+      await user.click(within(await screen.findByRole("banner")).getByRole("button", { name: "Nova aba" }));
+      await user.type(screen.getByLabelText("Nome da aba"), "Main{Enter}");
+      expect(screen.getByRole("button", { name: "Abrir" })).toBeDisabled();
+      await user.keyboard("{Enter}");
+      await act(async () => finish());
+
+      expect(backend.addTab).toHaveBeenCalledTimes(1);
     });
 
     it("shows backend errors", async () => {

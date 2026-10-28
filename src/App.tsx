@@ -93,6 +93,7 @@ export function App({ backend, windowControls, layout = "desktop" }: AppProps) {
         }}
         onAdd={add}
         onOpenSettings={() => setSettingsOpen(true)}
+        onDismissError={() => setError(null)}
       />
       <main ref={grid} className={settingsOpen ? "settings-page" : `pane-grid panes-${view.panes}`}>
         {settingsOpen && <SettingsView load={loadSettings} onSave={saveSettings} onClose={() => setSettingsOpen(false)} />}

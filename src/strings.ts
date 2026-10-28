@@ -17,6 +17,7 @@ export const t = {
   sound: "Som",
   pin: "Fixar",
   closeTab: "Fechar aba",
+  dismissError: "Dispensar erro",
   paneCount: (n: number) => (n === 1 ? "1 painel" : `${n} painéis`),
   pane: (n: number, label: string | null) => `Painel ${n}: ${label ?? "vazio"}`,
   paneTab: (n: number) => `Aba do painel ${n}`,

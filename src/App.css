@@ -183,6 +183,23 @@ button.primary:hover {
   text-overflow: ellipsis;
 }
 
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.error-banner p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.error-banner .icon-button {
+  flex: none;
+  color: inherit;
+}
+
 .meter {
   display: grid;
   grid-template-columns: auto 1fr;
