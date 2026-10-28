@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: ["**"]
-  pull_request:
-    branches: [main]
+    # Documentation alone cannot break anything the pipeline checks.
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+    inputs:
+      ios-bundle:
+        description: Also try to build the full iOS app bundle (slow, exploratory)
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -12,17 +18,57 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  TAURI_LINUX_DEPS: libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
 
 jobs:
-  test:
-    name: Test & benchmark
+  # Decides which platform jobs a push needs; all jobs then run in parallel.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      android: ${{ steps.filter.outputs.android }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            app: &app
+              - "crates/idlehub-core/**"
+              - "crates/tauri-plugin-tabs/src/**"
+              - "crates/tauri-plugin-tabs/*.toml"
+              - "crates/tauri-plugin-tabs/build.rs"
+              - "src-tauri/**"
+              - "src/**"
+              - "inject/**"
+              - "index.html"
+              - "vite.config.ts"
+              - "tsconfig.json"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - ".github/workflows/ci.yml"
+            android:
+              - *app
+              - "crates/tauri-plugin-tabs/android/**"
+            ios:
+              - *app
+              - "crates/tauri-plugin-tabs/ios/**"
+
+  # Linux: lint, unit tests, the page runtime benchmark and the end-to-end app
+  # benchmark share one job so system packages and the Rust build are set up once.
+  linux:
+    name: Linux tests & benchmarks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -30,10 +76,10 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Install Tauri system dependencies
+      - name: Install Tauri system dependencies and Xvfb
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends $TAURI_LINUX_DEPS xvfb
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
@@ -41,53 +87,35 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Cache Chromium for the benchmark
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install Chromium for the benchmark
         run: pnpm exec playwright install --with-deps chromium
-      - name: Performance benchmark
+      - name: Page runtime benchmark
         run: pnpm bench
+      - name: Desktop end-to-end benchmark
+        run: pnpm bench:app
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bench-results
+          name: linux-bench-results
           path: bench/results/
 
-  desktop-e2e:
-    name: Desktop end-to-end benchmark (Linux)
-    needs: test
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Tauri system dependencies and Xvfb
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev xvfb
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm bench:app
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: desktop-e2e-results
-          path: bench/results/
-
-  desktop-e2e-windows:
-    name: Desktop end-to-end benchmark (Windows)
-    needs: test
+  # Building the app for the end-to-end benchmark also checks the Windows build.
+  windows:
+    name: Windows build & end-to-end benchmark
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -98,23 +126,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: desktop-e2e-windows-results
+          name: windows-bench-results
           path: bench/results/
 
-  build:
-    name: Build (${{ matrix.os }})
-    needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  macos:
+    name: macOS build
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -125,21 +150,26 @@ jobs:
 
   android:
     name: Android
-    needs: test
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/gen/android/**/*.gradle*
+            crates/tauri-plugin-tabs/android/*.gradle*
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-linux-android,aarch64-linux-android
@@ -176,14 +206,15 @@ jobs:
 
   ios:
     name: iOS
-    needs: test
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -199,9 +230,9 @@ jobs:
         working-directory: crates/tauri-plugin-tabs/ios
         run: |
           set -o pipefail
-          xcodebuild -list
           xcodebuild test -scheme tauri-plugin-tabs -destination 'platform=iOS Simulator,name=iPhone 16' | tail -120
-      - name: Build the app bundle (exploratory)
+      - name: Build the app bundle (exploratory, on demand)
+        if: github.event_name == 'workflow_dispatch' && inputs.ios-bundle
         continue-on-error: true
         run: |
           pnpm tauri ios init --ci
