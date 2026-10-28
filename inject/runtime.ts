@@ -21,6 +21,16 @@ export type IdleHubWindow = Window &
 
 const DEFAULT_POLICY: RenderPolicy = { maxFps: 60, muted: false };
 
+/** The fields of `next` that are usable; anything else keeps its current value. */
+function usable(next: unknown): Partial<RenderPolicy> {
+  if (typeof next !== "object" || next === null) return {};
+  const { maxFps, muted } = next as Record<string, unknown>;
+  return {
+    ...(typeof maxFps === "number" ? { maxFps } : {}),
+    ...(typeof muted === "boolean" ? { muted } : {}),
+  };
+}
+
 /**
  * Installs every page-side optimisation and exposes `window.__idlehub` so the
  * host app can push a new policy with `__idlehub.apply({ maxFps, muted })`.
@@ -28,7 +38,7 @@ const DEFAULT_POLICY: RenderPolicy = { maxFps: 60, muted: false };
 export function installRuntime(win: IdleHubWindow): IdleHubRuntime {
   if (win.__idlehub) return win.__idlehub;
 
-  let policy = { ...DEFAULT_POLICY, ...win.__IDLEHUB_POLICY__ };
+  let policy = { ...DEFAULT_POLICY, ...usable(win.__IDLEHUB_POLICY__) };
   const restoreVisibility = installKeepVisible(win);
   const frames = installFrameLimiter(win, policy.maxFps);
   const audio = installAudioMute(win, policy.muted);
@@ -38,7 +48,7 @@ export function installRuntime(win: IdleHubWindow): IdleHubRuntime {
       return { ...policy };
     },
     apply(next) {
-      policy = { ...policy, ...next };
+      policy = { ...policy, ...usable(next) };
       frames.setMaxFps(policy.maxFps);
       audio.setMuted(policy.muted);
     },

@@ -150,6 +150,13 @@ describe("installFrameLimiter", () => {
     expect(frames.length - before).toBeGreaterThanOrEqual(5);
   });
 
+  it("treats an infinite cap as the highest one, not the lowest", () => {
+    const fake = createFakeFrameHost(60);
+    const limiter = installFrameLimiter(fake.host, 10);
+    limiter.setMaxFps(Number.POSITIVE_INFINITY);
+    expect(limiter.maxFps).toBe(240);
+  });
+
   it("rejects invalid caps", () => {
     const fake = createFakeFrameHost(60);
     const limiter = installFrameLimiter(fake.host, 10);

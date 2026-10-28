@@ -44,7 +44,8 @@ export function installFrameLimiter(
   let fps = MIN_FPS;
 
   function setMaxFps(value: number) {
-    fps = Number.isFinite(value) ? Math.min(MAX_FPS, Math.max(MIN_FPS, Math.round(value))) : MIN_FPS;
+    // NaN is a broken cap and gets the safe lowest rate; Infinity means "uncapped".
+    fps = Number.isNaN(value) ? MIN_FPS : Math.min(MAX_FPS, Math.max(MIN_FPS, Math.round(value)));
     const previous = interval;
     interval = 1000 / fps;
     if (interval >= previous || !Number.isFinite(nextDue)) return;

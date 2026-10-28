@@ -55,6 +55,25 @@ describe("installRuntime", () => {
     expect(runtime.policy.maxFps).toBe(60);
   });
 
+  it("ignores fields a policy sends as undefined", () => {
+    win.__IDLEHUB_POLICY__ = { maxFps: 30, muted: true };
+    const runtime = installRuntime(win);
+    runtime.apply({ maxFps: undefined, muted: undefined } as never);
+    expect(runtime.policy).toEqual({ maxFps: 30, muted: true });
+  });
+
+  it("treats an infinite cap as uncapped, not as the slowest rate", () => {
+    const runtime = installRuntime(win);
+    runtime.apply({ maxFps: Number.POSITIVE_INFINITY, muted: false });
+    expect(runtime.policy.maxFps).toBeGreaterThanOrEqual(120);
+  });
+
+  it("survives a policy that is not an object", () => {
+    const runtime = installRuntime(win);
+    expect(() => runtime.apply(null as never)).not.toThrow();
+    expect(runtime.policy).toEqual({ maxFps: 60, muted: false });
+  });
+
   it("keeps the page visible", () => {
     installRuntime(win);
     expect(document.visibilityState).toBe("visible");
