@@ -216,7 +216,6 @@ button.primary:hover {
   height: 100%;
   border-radius: 3px;
   background: var(--good);
-  transition: width 0.4s ease;
 }
 
 .window-controls {
