@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-tabs"
+version = "0.1.0"
+authors = ["Lucas Gomes"]
+description = "Native game webviews for IdleHub on Android and iOS"
+edition.workspace = true
+license.workspace = true
+links = "tauri-plugin-tabs"
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

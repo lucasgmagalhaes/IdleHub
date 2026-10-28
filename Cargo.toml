@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/idlehub-core", "src-tauri"]
+members = ["crates/idlehub-core", "crates/tauri-plugin-tabs", "src-tauri"]
 
 [workspace.package]
 edition = "2021"
