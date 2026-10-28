@@ -8,7 +8,10 @@ while keeping CPU and memory as low as possible.
   in the top bar). Each pane has its own header with the site, address, reload,
   sound, pin and close. Tabs that do not fit in the chosen layout keep running
   hidden and can be brought into any pane from its title.
-- **Mobile (Android, iOS):** planned, see [docs/PLANNING.md](docs/PLANNING.md).
+- **Mobile (Android, iOS 17+):** one tab on screen with a tab bar at the bottom;
+  the other tabs keep running hidden. Android keeps games running in the
+  background with a foreground service; iOS keeps them running while the app is
+  open (the screen does not auto-lock). See [docs/PLANNING.md](docs/PLANNING.md).
 
 ## How it saves resources
 
@@ -42,13 +45,16 @@ pnpm dev              # UI only, in a browser, on demo data
 pnpm test             # UI + injected runtime tests (Vitest)
 cargo test --workspace  # Rust domain tests
 pnpm bench            # CPU benchmark of the injected runtime
+pnpm tauri android dev  # Android (needs the Android SDK and NDK)
+pnpm tauri ios init && pnpm tauri ios dev  # iOS (macOS with Xcode)
 ```
 
 ## Layout
 
 ```
 crates/idlehub-core/   Pure Rust domain: accounts, layout, policies, profiles, metrics
-src-tauri/             Tauri shell: child webviews, injection, commands, sampling
+src-tauri/             Tauri shell: commands, injection, sampling; `host/` places game webviews
+crates/tauri-plugin-tabs/  Native game webviews for Android (Kotlin) and iOS (Swift)
 src/                   React toolbar UI
 inject/                Runtime injected into every game page
 bench/                 Performance benchmark

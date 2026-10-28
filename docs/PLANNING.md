@@ -110,6 +110,10 @@ makes WebView2 / WebKit throttle its timers.
 ## Roadmap
 
 1. ✅ Foundation: core domain, injected scripts, performance bench, desktop grid.
+1. ✅ Desktop pane layout (1–4 panes) matching the design.
+1. ✅ Android plugin: profile per account, parked tabs, foreground service.
+   Emulator tests (CI) check that parked and backgrounded tabs keep running.
+1. 🚧 iOS plugin: data store per account, parked tabs, no auto-lock while tabs run.
 2. Desktop hardening: persistent window state, per-account reload, crash recovery,
    metrics panel.
 3. Android plugin (Kotlin): ProfileStore webviews, foreground service.
