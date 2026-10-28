@@ -47,7 +47,8 @@ final class GameWebViewsTests: XCTestCase {
         let page = "https://example.com/"
         try games.open(id: "a", url: page, profile: UUID().uuidString, initScript: "")
         try games.open(id: "b", url: page, profile: UUID().uuidString, initScript: "")
-        try await sleep(4)
+        try await waitForLoad("a")
+        try await waitForLoad("b")
 
         _ = try await eval("a", "localStorage.setItem('who','a'); 'ok'")
         let seenByB = try await eval("b", "localStorage.getItem('who')")
@@ -69,7 +70,7 @@ final class GameWebViewsTests: XCTestCase {
         // Closing a tab promises the user that its login and data are erased.
         let profile = UUID()
         try games.open(id: "gone", url: "https://example.com/", profile: profile.uuidString, initScript: "")
-        try await sleep(4)
+        try await waitForLoad("gone")
         let before = await dataStores()
         XCTAssertTrue(before.contains(profile))
 
@@ -85,7 +86,7 @@ final class GameWebViewsTests: XCTestCase {
         // The app going away must not log every account out.
         let profile = UUID()
         try games.open(id: "kept", url: "https://example.com/", profile: profile.uuidString, initScript: "")
-        try await sleep(4)
+        try await waitForLoad("kept")
         games.closeAll()
         try await sleep(1)
         let stores = await dataStores()
@@ -100,6 +101,18 @@ final class GameWebViewsTests: XCTestCase {
         await withCheckedContinuation { done in
             WKWebsiteDataStore.fetchAllDataStoreIdentifiers { done.resume(returning: $0) }
         }
+    }
+
+    /// Waits until the tab shows its page: a fixed sleep fails when the simulator
+    /// is slow to start WebKit (13 s seen on CI), and storage throws before then.
+    private func waitForLoad(_ id: String, timeout: Double = 60) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let href = try? await eval(id, "document.readyState === 'complete' ? location.href : ''") as? String
+            if let href, href.hasPrefix("https://") { return }
+            try await sleep(0.5)
+        }
+        XCTFail("tab \(id) did not load in \(timeout) s")
     }
 
     private func sleep(_ seconds: Double) async throws {
