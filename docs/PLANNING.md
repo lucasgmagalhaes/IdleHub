@@ -53,8 +53,8 @@ The identifier is derived deterministically from the account id
 Huntera is a server-authoritative MMORPG: the session must stay connected, so we
 never discard a running account. Instead we make every non-focused account cheap:
 
-1. **Frame limiter** — `requestAnimationFrame` is capped (default 60 fps focused,
-   10 fps unfocused). Rendering is the dominant CPU cost of canvas games.
+1. **Frame limiter** — `requestAnimationFrame` is capped per tab (see the table
+   under *Desktop*). Rendering is the dominant CPU cost of canvas games.
 2. **Keep visible** — the page always reports `document.visibilityState === "visible"`
    and `visibilitychange` is swallowed, so the game never pauses or disconnects
    because it thinks it is hidden.
@@ -67,8 +67,21 @@ Policies are pure functions in `idlehub-core::policy` and pushed to pages throug
 
 ### Desktop
 
-One window, four child webviews in a 2×2 grid (`idlehub-core::layout`). Clicking an
-account focuses it (full window); `Esc` returns to the grid.
+One frameless window (overlay title bar on macOS). The React UI webview fills the
+window and draws the top bar, the pane chrome and the status bar. The user picks
+1–4 panes; the first N tabs are shown (`idlehub-core::workspace`), the rest keep
+running hidden.
+
+The UI measures each pane's content area and sends it to the shell
+(`set_pane_rects`), which moves the native game webviews on top of it. Tabs
+without a pane are shrunk to 1×1 px instead of hidden, because hiding a webview
+makes WebView2 / WebKit throttle its timers.
+
+| Tab state | Frame cap | Audio |
+|-----------|-----------|-------|
+| Only pane | 60 fps | tab's speaker toggle |
+| One of 2–4 panes | 30 fps | tab's speaker toggle |
+| Hidden | 5 fps | always muted |
 
 ### Android
 

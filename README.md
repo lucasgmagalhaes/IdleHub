@@ -4,8 +4,10 @@ Lightweight multi-account browser for idle browser games (starting with
 [Huntera](https://huntera.com.br)). Runs several isolated accounts side by side
 while keeping CPU and memory as low as possible.
 
-- **Desktop (Windows, macOS):** one window, up to 4 accounts in a 2×2 grid; focus
-  one account and the others keep running in a side rail.
+- **Desktop (Windows, macOS):** one window split into 1–4 panes (layout buttons
+  in the top bar). Each pane has its own header with the site, address, reload,
+  sound, pin and close. Tabs that do not fit in the chosen layout keep running
+  hidden and can be brought into any pane from its title.
 - **Mobile (Android, iOS):** planned, see [docs/PLANNING.md](docs/PLANNING.md).
 
 ## How it saves resources
@@ -36,6 +38,7 @@ Requirements: Node 22, pnpm 10, Rust stable, and the
 ```sh
 pnpm install
 pnpm tauri dev        # run the desktop app
+pnpm dev              # UI only, in a browser, on demo data
 pnpm test             # UI + injected runtime tests (Vitest)
 cargo test --workspace  # Rust domain tests
 pnpm bench            # CPU benchmark of the injected runtime
