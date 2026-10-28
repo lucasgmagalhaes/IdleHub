@@ -97,8 +97,11 @@ pub struct AccountStore {
 /// The store as found on disk, before the rules `add` enforces are checked.
 #[derive(Deserialize)]
 struct StoredAccounts {
+    #[serde(default)]
     max_accounts: usize,
-    accounts: Vec<Account>,
+    /// Read one by one, so one unreadable account does not lose the others.
+    #[serde(default)]
+    accounts: Vec<serde_json::Value>,
 }
 
 impl From<StoredAccounts> for AccountStore {
@@ -110,7 +113,11 @@ impl From<StoredAccounts> for AccountStore {
             n => n,
         };
         let mut store = Self::new(max_accounts);
-        for account in stored.accounts {
+        let readable = stored
+            .accounts
+            .into_iter()
+            .filter_map(|value| serde_json::from_value::<Account>(value).ok());
+        for account in readable {
             let fits = store.accounts.len() < max_accounts;
             if fits && store.get(account.id).is_none() && is_web_url(&account.url) {
                 store.accounts.push(account);
@@ -462,6 +469,22 @@ mod tests {
             ],
         );
         assert_eq!(labels(&store), ["B"]);
+    }
+
+    #[test]
+    fn loading_drops_only_the_account_that_cannot_be_read() {
+        let good = AccountId::new();
+        let json = serde_json::json!({
+            "max_accounts": 4,
+            "accounts": [
+                {"id": AccountId::new(), "label": "Broken", "url": DEFAULT_GAME_URL, "muted": "yes"},
+                {"id": "not-a-uuid", "label": "Bad id", "url": DEFAULT_GAME_URL},
+                {"id": good, "label": "Fine", "url": DEFAULT_GAME_URL},
+            ],
+        });
+        let store = AccountStore::from_json(&json.to_string()).unwrap();
+        assert_eq!(labels(&store), ["Fine"]);
+        assert_eq!(store.accounts()[0].id, good);
     }
 
     #[test]
