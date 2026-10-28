@@ -115,6 +115,41 @@ describe("installFrameLimiter", () => {
     expect(fake.host.requestAnimationFrame).toBe(native);
   });
 
+  it("reacts within one frame when the cap is raised during a long throttled sleep", () => {
+    // A hidden tab at 1 fps that gets shown must not wait out its old one-second sleep.
+    const fake = createFakeFrameHost(60);
+    const limiter = installFrameLimiter(fake.host, 1);
+    const frames = startGameLoop(fake.host);
+    fake.advance(1500);
+    const before = frames.length;
+    limiter.setMaxFps(60);
+    fake.advance(100);
+    expect(frames.length - before).toBeGreaterThanOrEqual(5);
+  });
+
+  it("does not spend a frame slot when every pending callback was cancelled", () => {
+    const fake = createFakeFrameHost(60);
+    installFrameLimiter(fake.host, 10);
+    fake.host.cancelAnimationFrame(fake.host.requestAnimationFrame(vi.fn()));
+    fake.advance(50);
+    const cb = vi.fn();
+    fake.host.requestAnimationFrame(cb);
+    fake.advance(30);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands pending callbacks back to the browser when uninstalled", () => {
+    // Otherwise a game loop waiting on a throttled frame would stop for good.
+    const fake = createFakeFrameHost(60);
+    const limiter = installFrameLimiter(fake.host, 2);
+    const frames = startGameLoop(fake.host);
+    fake.advance(100);
+    const before = frames.length;
+    limiter.uninstall();
+    fake.advance(100);
+    expect(frames.length - before).toBeGreaterThanOrEqual(5);
+  });
+
   it("rejects invalid caps", () => {
     const fake = createFakeFrameHost(60);
     const limiter = installFrameLimiter(fake.host, 10);

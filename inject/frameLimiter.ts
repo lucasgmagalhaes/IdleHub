@@ -39,11 +39,24 @@ export function installFrameLimiter(
   /** Wall-clock time the next frame is due. */
   let nextDue = -Infinity;
   let scheduled = false;
+  /** Pending sleep until the next frame is due, if any. */
+  let timer: unknown;
   let fps = MIN_FPS;
 
   function setMaxFps(value: number) {
     fps = Number.isFinite(value) ? Math.min(MAX_FPS, Math.max(MIN_FPS, Math.round(value))) : MIN_FPS;
+    const previous = interval;
     interval = 1000 / fps;
+    if (interval >= previous || !Number.isFinite(nextDue)) return;
+    // A faster cap counts from the last frame, so a tab leaving a 1 fps sleep
+    // renders right away instead of finishing the old wait.
+    nextDue -= previous - interval;
+    if (timer !== undefined) {
+      host.clearTimeout(timer);
+      timer = undefined;
+      scheduled = false;
+      schedule();
+    }
   }
 
   // Timing uses performance.now() at delivery, not the rAF timestamp: browsers
@@ -56,6 +69,8 @@ export function installFrameLimiter(
       return;
     }
     scheduled = false;
+    // Everything was cancelled; keep the slot for the next real request.
+    if (callbacks.size === 0) return;
     // Advance by whole intervals so caps between display rates (45 fps on 60 Hz)
     // alternate frames; after a long pause, restart from now instead of bursting.
     nextDue = now - nextDue > interval ? now + interval : nextDue + interval;
@@ -74,8 +89,14 @@ export function installFrameLimiter(
     if (scheduled) return;
     scheduled = true;
     const wait = nextDue - SLACK_MS - host.performance.now();
-    if (wait > 0) host.setTimeout(() => request(flush), wait);
-    else request(flush);
+    if (wait <= 0) {
+      request(flush);
+      return;
+    }
+    timer = host.setTimeout(() => {
+      timer = undefined;
+      request(flush);
+    }, wait);
   }
 
   host.requestAnimationFrame = (cb: FrameRequestCallback) => {
@@ -97,6 +118,11 @@ export function installFrameLimiter(
     uninstall() {
       host.requestAnimationFrame = nativeRequest;
       host.cancelAnimationFrame = nativeCancel;
+      if (timer !== undefined) host.clearTimeout(timer);
+      // Callbacks still waiting for a throttled frame go to the browser, or the game loop would stop.
+      const pending = [...callbacks.values()];
+      callbacks.clear();
+      for (const cb of pending) nativeRequest.call(host, cb);
     },
   };
 }
