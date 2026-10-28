@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "bench": "pnpm build:inject && node bench/frame-limiter.bench.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bench:app": "pnpm tauri build --debug --no-bundle && node bench/app.bench.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
