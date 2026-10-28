@@ -11,12 +11,20 @@ interface NewTabFormProps {
 export function NewTabForm({ onSubmit, onCancel }: NewTabFormProps) {
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (await onSubmit(label, url.trim() || undefined)) {
-      setLabel("");
-      setUrl("");
+    // A second Enter while the first tab is opening would try to add it twice.
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (await onSubmit(label, url.trim() || undefined)) {
+        setLabel("");
+        setUrl("");
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -36,7 +44,7 @@ export function NewTabForm({ onSubmit, onCancel }: NewTabFormProps) {
         onChange={(e) => setUrl(e.target.value)}
         type="url"
       />
-      <button type="submit" className="primary">
+      <button type="submit" className="primary" disabled={busy}>
         {t.open}
       </button>
       <button type="button" className="icon-button" aria-label={t.cancel} onClick={onCancel}>
