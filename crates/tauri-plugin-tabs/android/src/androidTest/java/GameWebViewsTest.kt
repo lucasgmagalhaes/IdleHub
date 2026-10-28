@@ -14,6 +14,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,7 +51,8 @@ class GameWebViewsTest {
             it.games.place("visible", GameWebViews.Css(0.0, 0.0, 300.0, 400.0))
             it.games.place("parked", null)
         }
-        Thread.sleep(1_000)
+        waitForGame("visible")
+        waitForGame("parked")
         val visibleStart = ticks("visible")
         val parkedStart = ticks("parked")
         Thread.sleep(5_000)
@@ -64,7 +66,7 @@ class GameWebViewsTest {
     @Test
     fun tabsKeepRunningWhileTheAppIsInTheBackground() {
         scenario.onActivity { it.games.open("tab", game, "profile-bg", "") }
-        Thread.sleep(1_000)
+        waitForGame("tab")
         val before = ticks("tab")
 
         scenario.moveToState(Lifecycle.State.CREATED) // activity stopped, like pressing Home
@@ -83,7 +85,8 @@ class GameWebViewsTest {
             it.games.open("a", page, "profile-a", "")
             it.games.open("b", page, "profile-b", "")
         }
-        Thread.sleep(3_000)
+        waitForPage("a")
+        waitForPage("b")
         eval("a", "localStorage.setItem('who','a'); 'ok'")
         assertNotEquals("\"a\"", eval("b", "localStorage.getItem('who')"))
         assertEquals("\"a\"", eval("a", "localStorage.getItem('who')"))
@@ -111,7 +114,7 @@ class GameWebViewsTest {
         // Closing a tab promises the user that its login and data are erased.
         val page = "https://example.com/"
         scenario.onActivity { it.games.open("gone", page, "profile-forget", "") }
-        Thread.sleep(3_000)
+        waitForPage("gone")
         eval("gone", "localStorage.setItem('who','gone'); document.cookie='who=gone; max-age=3600'; 'ok'")
         scenario.onActivity { it.games.forget("gone") }
         Thread.sleep(2_000)
@@ -119,7 +122,7 @@ class GameWebViewsTest {
 
         // Whether or not the profile could be deleted yet, nothing of the account is left.
         scenario.onActivity { it.games.open("again", page, "profile-forget", "") }
-        Thread.sleep(3_000)
+        waitForPage("again")
         assertEquals("null", eval("again", "localStorage.getItem('who')"))
         assertFalse(eval("again", "document.cookie").contains("who=gone"))
     }
@@ -132,6 +135,24 @@ class GameWebViewsTest {
         scenario.onActivity { it.games.closeAll() }
         Thread.sleep(1_000)
         scenario.onActivity { assertNotNull(ProfileStore.getInstance().getProfile("profile-kept")) }
+    }
+
+    private fun waitForGame(id: String) = waitUntil(id, "typeof window.ticks === 'number'")
+
+    private fun waitForPage(id: String) =
+        waitUntil(id, "document.readyState === 'complete' && location.href.startsWith('https://')")
+
+    /**
+     * Polls [condition] in the tab: a fixed sleep fails when the emulator is slow
+     * to start the renderer, and the page is then read before it exists.
+     */
+    private fun waitUntil(id: String, condition: String, timeoutMs: Long = 60_000) {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            if (eval(id, condition) == "true") return
+            Thread.sleep(250)
+        }
+        fail("tab $id did not load in ${timeoutMs / 1000} s")
     }
 
     private fun ticks(id: String): Int = eval(id, "window.ticks").toInt()
