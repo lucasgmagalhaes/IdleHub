@@ -28,14 +28,15 @@ Chromium; CPU of all browser processes and of the pages' main threads):
 
 | Scenario | All processes | Main thread | FPS per tab |
 |---|---|---|---|
-| No IdleHub runtime | ~95% CPU | ~760 ms/s | 60/60/60/60 |
-| Runtime installed, nothing capped | ~95% (±2%: no overhead) | ~745 ms/s | 60/60/60/60 |
-| 4 panes (30 fps each) | ~63% (**−33%**) | ~400 ms/s (**−47%**) | 30/30/30/30 |
-| 1 pane (60 fps) + 3 hidden (5 fps) | ~35% (**−63%**) | ~225 ms/s (**−70%**) | 60/5/5/5 |
+| No IdleHub runtime | ~90% CPU | ~710 ms/s | 60/60/60/60 |
+| Runtime installed, nothing capped | ~92% (within noise: no overhead) | ~720 ms/s | 60/60/60/60 |
+| 4 panes (30 fps each) | ~62% (**−31%**) | ~400 ms/s (**−43%**) | 30/30/30/30 |
+| 1 pane (60 fps) + 3 hidden (1 fps) | ~29% (**−67%**) | ~210 ms/s (**−70%**) | 60/1/1/1 |
 
 `pnpm bench:app` runs the real desktop app (Linux/WebKitGTK) the same way and
-checks that every tab renders at its policy's cap end to end (measured: 30/30/30/30
-and 60/5/5/5) and that hiding tabs lowers the app's CPU (−28%).
+checks every tab renders at its policy's cap end to end, with a per-process
+breakdown. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the measurements
+behind each optimization.
 
 Game timers (server ticks) keep running at full speed in every scenario.
 
