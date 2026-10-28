@@ -230,7 +230,10 @@ jobs:
         working-directory: crates/tauri-plugin-tabs/ios
         run: |
           set -o pipefail
-          xcodebuild test -scheme tauri-plugin-tabs -destination 'platform=iOS Simulator,name=iPhone 16' | tail -120
+          # Runner images rotate simulator models; take whichever iPhone is installed.
+          device=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [^(]*[^ (]')
+          echo "Testing on $device"
+          xcodebuild test -scheme tauri-plugin-tabs -destination "platform=iOS Simulator,name=$device" | tail -120
       - name: Build the app bundle (exploratory, on demand)
         if: github.event_name == 'workflow_dispatch' && inputs.ios-bundle
         continue-on-error: true
