@@ -3,12 +3,10 @@
 // Usage: pnpm bench   (builds dist-inject/inject.js first)
 // Fails (exit 1) when the savings fall below the thresholds below.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const require = createRequire(import.meta.url);
-const { chromium } = require("playwright");
+import { chromium } from "playwright";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const gameUrl = pathToFileURL(join(root, "bench/fixtures/game.html")).href;
