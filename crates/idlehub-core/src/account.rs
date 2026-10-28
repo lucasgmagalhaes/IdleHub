@@ -61,6 +61,14 @@ fn default_muted() -> bool {
     true
 }
 
+/// An http(s) address with a host, which every platform's webview can load.
+fn is_web_url(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|parsed| {
+        matches!(parsed.scheme(), "http" | "https")
+            && parsed.host_str().is_some_and(|h| !h.is_empty())
+    })
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AccountError {
     #[error("account limit of {0} reached")]
@@ -117,7 +125,7 @@ impl AccountStore {
         }
         let label = self.validate_label(label, None)?;
         let url = url.unwrap_or(DEFAULT_GAME_URL).trim();
-        if !(url.starts_with("https://") || url.starts_with("http://")) {
+        if !is_web_url(url) {
             return Err(AccountError::InvalidUrl);
         }
         self.accounts.push(Account {
@@ -244,6 +252,31 @@ mod tests {
             store.add("A", Some("file:///etc/passwd")).unwrap_err(),
             AccountError::InvalidUrl
         );
+    }
+
+    #[test]
+    fn add_rejects_urls_the_webview_cannot_open() {
+        // These passed a prefix check, then failed when the webview was created.
+        let mut store = AccountStore::default();
+        for url in [
+            "https://",
+            "http://",
+            "https://exa mple.com",
+            "https://[::1",
+        ] {
+            assert_eq!(
+                store.add("A", Some(url)).unwrap_err(),
+                AccountError::InvalidUrl,
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn add_accepts_scheme_in_any_case_and_keeps_the_url_as_typed() {
+        let mut store = AccountStore::default();
+        let account = store.add("A", Some(" HTTPS://huntera.com.br ")).unwrap();
+        assert_eq!(account.url, "HTTPS://huntera.com.br");
     }
 
     #[test]
