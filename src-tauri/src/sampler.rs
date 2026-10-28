@@ -30,6 +30,8 @@ impl Sampler {
         self.system
             .processes()
             .values()
+            // On Linux threads are listed as processes sharing the parent's memory.
+            .filter(|p| p.thread_kind().is_none())
             .map(|p| ProcessSample {
                 pid: p.pid().as_u32(),
                 parent: p.parent().map(|parent| parent.as_u32()),
