@@ -25,6 +25,7 @@ use wry::{
 };
 
 use super::desktop;
+use crate::locks::lock;
 use crate::scripts::{apply_policy_script, initialization_script};
 use crate::{to_error, AppState, CommandResult};
 
@@ -111,7 +112,7 @@ pub fn open(app: &AppHandle, data_dir: &Path, tab: &TabState) -> CommandResult<(
         // Lets the next sync try again. Called on the main thread, possibly from
         // inside a sync that holds the lock, so it must not wait for it here.
         std::thread::spawn(move || {
-            retry.state::<AppState>().opened.lock().unwrap().remove(&id);
+            lock(&retry.state::<AppState>().opened).remove(&id);
         });
     };
     on_main_thread_or(
@@ -129,7 +130,7 @@ pub fn open(app: &AppHandle, data_dir: &Path, tab: &TabState) -> CommandResult<(
                         // A reload restarts the runtime with the initial policy; re-send the current one.
                         if matches!(event, PageLoadEvent::Finished) {
                             let state = handle.state::<AppState>();
-                            state.applied.lock().unwrap().remove(&id);
+                            lock(&state.applied).remove(&id);
                             crate::report(&handle, crate::sync(&handle, &state));
                         }
                     })

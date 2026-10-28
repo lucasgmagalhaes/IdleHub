@@ -1,6 +1,7 @@
 #[cfg(any(mobile, test))]
 mod copy;
 mod host;
+mod locks;
 mod sampler;
 mod scripts;
 mod storage;
@@ -18,6 +19,7 @@ use idlehub_core::workspace::{TabState, Workspace};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use locks::lock;
 use sampler::Sampler;
 
 struct AppState {
@@ -81,10 +83,10 @@ fn view(workspace: &Workspace) -> TabsView {
 /// A tab that fails does not hold up the others; the first error is returned
 /// and the failed step is retried on the next sync.
 fn sync(app: &AppHandle, state: &AppState) -> CommandResult<()> {
-    let tabs = state.workspace.lock().unwrap().tabs();
-    let rects = state.pane_rects.lock().unwrap().clone();
-    let mut opened = state.opened.lock().unwrap();
-    let mut applied = state.applied.lock().unwrap();
+    let tabs = lock(&state.workspace).tabs();
+    let rects = lock(&state.pane_rects).clone();
+    let mut opened = lock(&state.opened);
+    let mut applied = lock(&state.applied);
     let mut first_error = None;
     let mut newly_opened = false;
     for tab in &tabs {
@@ -121,7 +123,7 @@ fn update(
     change: impl FnOnce(&mut Workspace) -> Result<(), String>,
 ) -> CommandResult<TabsView> {
     let view = {
-        let mut workspace = state.workspace.lock().unwrap();
+        let mut workspace = lock(&state.workspace);
         storage::commit(&state.data_dir, &mut workspace, change)?;
         view(&workspace)
     };
@@ -136,7 +138,7 @@ fn parse_id(id: &str) -> CommandResult<AccountId> {
 
 #[tauri::command]
 async fn get_tabs(state: State<'_, AppState>) -> CommandResult<TabsView> {
-    Ok(view(&state.workspace.lock().unwrap()))
+    Ok(view(&lock(&state.workspace)))
 }
 
 #[tauri::command]
@@ -159,9 +161,9 @@ async fn close_tab(
 ) -> CommandResult<TabsView> {
     let id = parse_id(&id)?;
     let view = update(&app, &state, |ws| ws.remove(id).map(drop).map_err(to_error))?;
-    state.applied.lock().unwrap().remove(&id);
+    lock(&state.applied).remove(&id);
     // The tab is already gone from the workspace; clean up as much as possible.
-    if state.opened.lock().unwrap().remove(&id) {
+    if lock(&state.opened).remove(&id) {
         report(&app, host::close(&app, id));
     }
     report(&app, host::tabs_running(&app, view.tabs.len()));
@@ -230,7 +232,7 @@ async fn set_pinned(
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> CommandResult<PolicySettings> {
-    Ok(state.workspace.lock().unwrap().policy())
+    Ok(lock(&state.workspace).policy())
 }
 
 #[tauri::command]
@@ -256,7 +258,7 @@ async fn set_pane_rects(
     state: State<'_, AppState>,
     rects: Vec<Rect>,
 ) -> CommandResult<()> {
-    *state.pane_rects.lock().unwrap() = rects;
+    *lock(&state.pane_rects) = rects;
     report(&app, sync(&app, &state));
     Ok(())
 }
@@ -264,7 +266,7 @@ async fn set_pane_rects(
 #[tauri::command]
 async fn usage_report(state: State<'_, AppState>) -> CommandResult<UsageReport> {
     let (snapshot, system_memory_bytes, cpu_count) = {
-        let mut sampler = state.sampler.lock().unwrap();
+        let mut sampler = lock(&state.sampler);
         (
             sampler.snapshot(),
             sampler.total_memory(),

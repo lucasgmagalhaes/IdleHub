@@ -12,6 +12,7 @@ use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::window::WindowBuilder;
 use tauri::{App, AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, Window};
 
+use crate::locks::lock;
 use crate::scripts::{
     account_id_from_label, apply_policy_script, initialization_script, webview_label,
 };
@@ -67,7 +68,7 @@ pub fn open(app: &AppHandle, data_dir: &Path, tab: &TabState) -> CommandResult<(
             }
             if let Some(id) = account_id_from_label(webview.label()) {
                 let state = webview.app_handle().state::<AppState>();
-                state.applied.lock().unwrap().remove(&id);
+                lock(&state.applied).remove(&id);
                 crate::report(
                     webview.app_handle(),
                     crate::sync(webview.app_handle(), &state),
