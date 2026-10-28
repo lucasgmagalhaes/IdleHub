@@ -103,6 +103,17 @@ account focuses it (full window); `Esc` returns to the grid.
 4. iOS plugin (Swift): data stores per account, keep-attached tabs.
 5. Spike: validate on real Huntera sessions (visibility handling, reconnects, offline cap).
 
+## Known platform limitations
+
+- **Linux** (dev only, not a target): Tauri packs child webviews into a `GtkBox`,
+  so they stack instead of following the grid bounds. Windows and macOS position
+  child webviews absolutely.
+- **Per-account usage** is attributed through the profile directory on the
+  browser process command line. This works with WebView2 (Windows). WebKit
+  (macOS, Linux) does not expose it, so only the total is shown there; on macOS
+  WebKit's content processes are not children of the app, so the total only
+  covers the app process until a native probe is added.
+
 ## Risks
 
 - Multi-webview in Tauri is behind the `unstable` feature.
