@@ -9,8 +9,11 @@
     <canvas id="c" width="800" height="600"></canvas>
     <script>
       // Stand-in for a canvas game: a full redraw every frame plus a server tick.
+      // Query: ?sprites=N (draw cost), ?tab=ID&report=1 (POST stats to /stats every second).
+      const params = new URLSearchParams(location.search);
+      const count = Number(params.get("sprites") ?? 1500);
       const ctx = document.getElementById("c").getContext("2d");
-      const sprites = Array.from({ length: 1500 }, (_, i) => ({
+      const sprites = Array.from({ length: count }, (_, i) => ({
         x: (i * 37) % 800, y: (i * 91) % 600, dx: (i % 7) - 3, dy: (i % 5) - 2, hue: (i * 13) % 360,
       }));
       window.stats = { frames: 0, ticks: 0, hidden: 0 };
@@ -29,6 +32,13 @@
         requestAnimationFrame(frame);
       }
       requestAnimationFrame(frame);
+      if (params.get("report")) {
+        const tab = params.get("tab");
+        setInterval(() => {
+          const body = JSON.stringify({ tab, ...window.stats, at: performance.now() });
+          fetch("/stats", { method: "POST", body, keepalive: true }).catch(() => {});
+        }, 1000);
+      }
     </script>
   </body>
 </html>
