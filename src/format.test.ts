@@ -1,4 +1,4 @@
-import { formatBytes, formatCpu } from "./format";
+import { displayUrl, formatBytes, formatCpu } from "./format";
 
 describe("formatBytes", () => {
   it.each([
@@ -18,5 +18,16 @@ describe("formatCpu", () => {
     [42.6, "43%"],
   ])("formats %d as %s", (cpu, expected) => {
     expect(formatCpu(cpu)).toBe(expected);
+  });
+});
+
+describe("displayUrl", () => {
+  it.each([
+    ["https://orteil.dashnet.org/cookieclicker/", "orteil.dashnet.org/cookieclicker/"],
+    ["https://melvoridle.com", "melvoridle.com"],
+    ["https://melvoridle.com/", "melvoridle.com"],
+    ["not a url", "not a url"],
+  ])("shows %s as %s", (url, expected) => {
+    expect(displayUrl(url)).toBe(expected);
   });
 });

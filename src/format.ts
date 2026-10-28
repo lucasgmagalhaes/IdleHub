@@ -13,3 +13,13 @@ export function formatBytes(bytes: number): string {
 export function formatCpu(percent: number): string {
   return `${compact(percent)}%`;
 }
+
+/** Host and path without the protocol, e.g. `orteil.dashnet.org/cookieclicker/`. */
+export function displayUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.host + (parsed.pathname === "/" ? "" : parsed.pathname);
+  } catch {
+    return url;
+  }
+}
