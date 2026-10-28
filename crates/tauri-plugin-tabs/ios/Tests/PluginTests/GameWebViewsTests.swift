@@ -65,8 +65,41 @@ final class GameWebViewsTests: XCTestCase {
         XCTAssertEqual(games.webView(for: "tab")?.frame, CssFrame.parked)
     }
 
+    func testForgettingATabDeletesItsDataStore() async throws {
+        // Closing a tab promises the user that its login and data are erased.
+        let profile = UUID()
+        try games.open(id: "gone", url: "https://example.com/", profile: profile.uuidString, initScript: "")
+        try await sleep(4)
+        let before = await dataStores()
+        XCTAssertTrue(before.contains(profile))
+
+        games.forget(id: "gone")
+        try await sleep(3)
+
+        XCTAssertNil(games.webView(for: "gone"))
+        let after = await dataStores()
+        XCTAssertFalse(after.contains(profile))
+    }
+
+    func testClosingEverythingKeepsTheDataStores() async throws {
+        // The app going away must not log every account out.
+        let profile = UUID()
+        try games.open(id: "kept", url: "https://example.com/", profile: profile.uuidString, initScript: "")
+        try await sleep(4)
+        games.closeAll()
+        try await sleep(1)
+        let stores = await dataStores()
+        XCTAssertTrue(stores.contains(profile))
+    }
+
     func testRejectsProfilesThatAreNotUuids() {
         XCTAssertThrowsError(try games.open(id: "x", url: game, profile: "nope", initScript: ""))
+    }
+
+    private func dataStores() async -> [UUID] {
+        await withCheckedContinuation { done in
+            WKWebsiteDataStore.fetchAllDataStoreIdentifiers { done.resume(returning: $0) }
+        }
     }
 
     private func sleep(_ seconds: Double) async throws {

@@ -69,7 +69,8 @@ class TabsPlugin: Plugin {
 
     @objc public func close(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(TabArgs.self)
-        onMain(invoke) { $0.close(id: args.id) }
+        // Only the user closes tabs; their data goes with them.
+        onMain(invoke) { $0.forget(id: args.id) }
     }
 
     /// iOS does not let apps run in the background, so the best we can do is keep

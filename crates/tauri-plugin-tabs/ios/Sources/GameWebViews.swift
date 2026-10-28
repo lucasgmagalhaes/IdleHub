@@ -84,10 +84,31 @@ final class GameWebViews: NSObject, WKNavigationDelegate {
         tabs[id]?.webView.reload()
     }
 
+    /// Removes the tab's webview; its data store (login, storage) stays for the next launch.
     func close(id: String) {
         guard let tab = tabs.removeValue(forKey: id) else { return }
         tab.webView.navigationDelegate = nil
         tab.webView.removeFromSuperview()
+    }
+
+    /// Closes the tab for good and erases its data store: the account is logged out.
+    func forget(id: String) {
+        guard let profile = tabs[id]?.profile else { return }
+        close(id)
+        if #available(iOS 17.0, *) {
+            Self.removeDataStore(profile, attemptsLeft: 10)
+        }
+    }
+
+    /// The store is busy until the closed webview is released; retry until it is free.
+    @available(iOS 17.0, *)
+    private static func removeDataStore(_ profile: UUID, attemptsLeft: Int) {
+        WKWebsiteDataStore.remove(forIdentifier: profile) { error in
+            guard error != nil, attemptsLeft > 1 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                GameWebViews.removeDataStore(profile, attemptsLeft: attemptsLeft - 1)
+            }
+        }
     }
 
     func closeAll() {
